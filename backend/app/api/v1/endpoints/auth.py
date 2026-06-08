@@ -31,5 +31,5 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Conta desativada")
-    token = create_access_token({"sub": user.id, "role": user.role})
+    token = create_access_token({"sub": str(user.id), "role": user.role})
     return TokenOut(access_token=token, role=user.role)
