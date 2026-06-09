@@ -5,13 +5,13 @@ export default {
     extend: {
       colors: {
         brand: {
-          900: "#0a0f1e",
-          800: "#0d1526",
-          700: "#111d33",
-          600: "#1a2a45",
-          500: "#1e3a5f",
-          400: "#2563eb",
-          300: "#3b82f6",
+          900: "rgb(var(--brand-900) / <alpha-value>)",
+          800: "rgb(var(--brand-800) / <alpha-value>)",
+          700: "rgb(var(--brand-700) / <alpha-value>)",
+          600: "rgb(var(--brand-600) / <alpha-value>)",
+          500: "rgb(var(--brand-500) / <alpha-value>)",
+          400: "rgb(var(--brand-400) / <alpha-value>)",
+          300: "rgb(var(--brand-300) / <alpha-value>)",
         },
         crisis: {
           low: "#22c55e",

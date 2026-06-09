@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     VTRACKER_API_KEY: str = ""
     VTRACKER_BASE_URL: str = ""
+    VTRACKER_TOKEN: str = ""
+    VTRACKER_EMAIL: str = ""
+    VTRACKER_SENHA: str = ""
+
+    LLM_BASE_URL: str = "http://127.0.0.1:8080/v1"
+    LLM_MODEL: str = "mlx-community/Qwen2.5-32B-Instruct-4bit"
 
     class Config:
         env_file = ".env"

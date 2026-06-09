@@ -4,14 +4,58 @@
 @tailwind components;
 @tailwind utilities;
 
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+  --brand-900: 246 248 252;
+  --brand-800: 255 255 255;
+  --brand-700: 241 245 249;
+  --brand-600: 214 226 240;
+  --brand-500: 190 206 224;
+  --brand-400: 37 99 235;
+  --brand-300: 29 78 216;
+  --page-bg: #f6f8fc;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
+  --text-strong: #0f172a;
+  --text-main: #334155;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+  --border-soft: #d6e2f0;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --brand-900: 10 15 30;
+  --brand-800: 13 21 38;
+  --brand-700: 17 29 51;
+  --brand-600: 26 42 69;
+  --brand-500: 30 58 95;
+  --brand-400: 37 99 235;
+  --brand-300: 59 130 246;
+  --page-bg: #0a0f1e;
+  --surface: #0d1526;
+  --surface-muted: #111d33;
+  --text-strong: #f8fafc;
+  --text-main: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-subtle: #64748b;
+  --border-soft: #1a2a45;
+  --shadow-card: none;
+}
+
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background-color: #0a0f1e;
-  color: #e2e8f0;
+  background-color: var(--page-bg);
+  color: var(--text-main);
   font-family: 'Inter', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #root {
@@ -19,6 +63,87 @@ body {
   min-height: 100svh;
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #0d1526; }
-::-webkit-scrollbar-thumb { background: #1a2a45; border-radius: 3px; }
+.app-shell {
+  background: var(--page-bg);
+  color: var(--text-main);
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgb(var(--brand-300) / 0.45);
+  outline-offset: 2px;
+}
+
+html[data-theme="light"] .text-white { color: var(--text-strong) !important; }
+html[data-theme="light"] .bg-brand-400.text-white,
+html[data-theme="light"] .bg-brand-500.text-white,
+html[data-theme="light"] .bg-violet-600.text-white,
+html[data-theme="light"] .bg-rose-700.text-white,
+html[data-theme="light"] .bg-red-500.text-white,
+html[data-theme="light"] .bg-green-500.text-white,
+html[data-theme="light"] .bg-emerald-500.text-white,
+html[data-theme="light"] button.bg-brand-400,
+html[data-theme="light"] button.bg-violet-600,
+html[data-theme="light"] button.bg-rose-700 {
+  color: #ffffff !important;
+}
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300 { color: var(--text-main) !important; }
+html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-500 { color: var(--text-muted) !important; }
+html[data-theme="light"] .text-slate-600 { color: var(--text-subtle) !important; }
+html[data-theme="light"] .placeholder-slate-500::placeholder { color: var(--text-subtle) !important; }
+html[data-theme="light"] .shadow-2xl { box-shadow: var(--shadow-card); }
+
+/* Compatibility layer for classes created when the app was dark-only.
+   This keeps the light theme readable even if the Vite dev server still has
+   the old Tailwind color config cached. */
+html[data-theme="light"] .bg-brand-900 { background-color: var(--page-bg) !important; }
+html[data-theme="light"] .bg-brand-800,
+html[data-theme="light"] [class~="bg-brand-800/40"],
+html[data-theme="light"] [class~="bg-brand-800/60"],
+html[data-theme="light"] [class~="bg-brand-800/70"],
+html[data-theme="light"] [class~="bg-brand-800/90"] {
+  background-color: var(--surface) !important;
+}
+html[data-theme="light"] .bg-brand-700,
+html[data-theme="light"] [class~="bg-brand-700/30"],
+html[data-theme="light"] [class~="bg-brand-700/40"],
+html[data-theme="light"] [class~="bg-brand-700/50"],
+html[data-theme="light"] [class~="bg-brand-700/60"],
+html[data-theme="light"] [class~="bg-brand-900/40"],
+html[data-theme="light"] [class~="bg-brand-900/50"],
+html[data-theme="light"] [class~="bg-brand-900/60"] {
+  background-color: var(--surface-muted) !important;
+}
+html[data-theme="light"] .border-brand-600,
+html[data-theme="light"] .border-brand-700,
+html[data-theme="light"] [class~="border-brand-600/60"],
+html[data-theme="light"] [class~="border-brand-600/70"],
+html[data-theme="light"] [class~="border-brand-700/40"],
+html[data-theme="light"] [class~="border-brand-700/50"] {
+  border-color: var(--border-soft) !important;
+}
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  color: var(--text-strong);
+}
+html[data-theme="light"] input[type="date"] {
+  color-scheme: light;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgb(var(--brand-900)); }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--brand-500));
+  border: 3px solid rgb(var(--brand-900));
+  border-radius: 999px;
+}

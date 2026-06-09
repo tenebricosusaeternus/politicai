@@ -1,15 +1,13 @@
 import { api } from "./client"
 
-export interface Report {
+export interface RelatorioListItem {
   id: number
-  title: string
-  summary: string | null
-  content: string | null
-  crisis_score: number | null
-  sentiment_score: number | null
-  report_date: string
-  ai_insights: Record<string, unknown> | null
-  created_at: string
+  titulo: string
+  periodo_inicio: string
+  periodo_fim: string
+  nivel_alerta: number
+  status: "rascunho" | "publicado"
+  created_at: string | null
 }
 
 export interface CrisisPoint {
@@ -18,13 +16,123 @@ export interface CrisisPoint {
   sentiment_score: number | null
 }
 
-export const getToday = () => api.get<Report>("/reports/today").then((r) => r.data)
+export interface TemaItem {
+  titulo: string
+  descricao: string
+  alcance: string
+  interacoes: string
+  polaridade: string
+  tendencia: string
+  fontes: string[]
+}
 
-export const getByDate = (date: string) =>
-  api.get<Report>(`/reports/${date}`).then((r) => r.data)
+export interface DestaquesAlerta {
+  titulo: string
+  descricao: string
+  alcance: string
+  interacoes: string
+  fontes: string[]
+}
 
-export const listReports = (dateFrom?: string, dateTo?: string) =>
-  api.get<Report[]>("/reports/", { params: { date_from: dateFrom, date_to: dateTo } }).then((r) => r.data)
+export interface CanalPerformance {
+  nome: string
+  interacoes: string
+}
 
-export const getCrisisHistory = (dateFrom?: string, dateTo?: string) =>
-  api.get<CrisisPoint[]>("/reports/crisis-history/", { params: { date_from: dateFrom, date_to: dateTo } }).then((r) => r.data)
+export interface PerformanceDigital {
+  interacoes_total: string
+  novos_seguidores: string
+  engajamento_taxa: string
+  canais: CanalPerformance[]
+  analise: string
+  destaque: string
+}
+
+export interface Tendencias {
+  google: string
+  twitter: string
+  youtube: string
+}
+
+export interface Recomendacao {
+  numero: number
+  titulo: string
+  descricao: string
+}
+
+export interface ResumoItem {
+  titulo: string
+  texto: string
+}
+
+// ─── Blocos (editor) ─────────────────────────────────────────────────────────
+
+export type BlocoTipo =
+  | "titulo" | "texto" | "imagem" | "grafico" | "callout" | "metricas" | "divisoria"
+
+export interface MetricaItem { label: string; valor: string; sub?: string }
+export interface GraficoSerie { nome: string; dados: number[] }
+export interface GraficoDados {
+  variante: "bar" | "line" | "pie"
+  titulo?: string
+  categorias: string[]
+  series: GraficoSerie[]
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface Bloco { id: string; tipo: BlocoTipo; dados: any }
+
+export interface RelatorioDetail extends RelatorioListItem {
+  nivel_alerta_justificativa: string | null
+  temas: { principal: TemaItem; secundarios: TemaItem[] } | null
+  destaques: DestaquesAlerta[] | null
+  alertas: DestaquesAlerta[] | null
+  performance_prefeitura: PerformanceDigital | null
+  performance_igor: PerformanceDigital | null
+  tendencias: Tendencias | null
+  recomendacoes: Recomendacao[] | null
+  resumo: ResumoItem[] | null
+  blocos: Bloco[] | null
+  gerado_por_llm: string | null
+  updated_at: string | null
+}
+
+/** Origem do backend (para resolver URLs de /uploads). */
+export const BACKEND_ORIGIN = (api.defaults.baseURL || "http://localhost:8000/api/v1")
+  .replace(/\/api\/v1\/?$/, "")
+
+/** Resolve uma URL de imagem do relatório (/uploads/... → absoluta). */
+export function resolverImagem(url: string): string {
+  if (!url) return ""
+  if (url.startsWith("http") || url.startsWith("data:")) return url
+  return `${BACKEND_ORIGIN}${url}`
+}
+
+export const reportsApi = {
+  listar: (offset = 0, limit = 30) =>
+    api.get<{ total: number; items: RelatorioListItem[] }>(`/reports/?offset=${offset}&limit=${limit}`)
+      .then((r) => r.data),
+
+  get: (id: number) =>
+    api.get<RelatorioDetail>(`/reports/${id}`).then((r) => r.data),
+
+  gerar: (periodo_inicio: string, periodo_fim?: string) =>
+    api.post<RelatorioDetail>("/reports/gerar", { periodo_inicio, periodo_fim })
+      .then((r) => r.data),
+
+  atualizar: (id: number, payload: Record<string, unknown>) =>
+    api.patch<RelatorioDetail>(`/reports/${id}`, payload).then((r) => r.data),
+
+  deletar: (id: number) =>
+    api.delete(`/reports/${id}`).then((r) => r.data),
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  gerarBloco: (id: number, tipo: BlocoTipo, instrucao: string): Promise<{ dados: any }> =>
+    api.post(`/reports/${id}/gerar-bloco`, { tipo, instrucao }).then((r) => r.data),
+
+  uploadImagem: (file: File): Promise<{ url: string }> => {
+    const fd = new FormData()
+    fd.append("file", file)
+    return api.post("/reports/upload-imagem", fd).then((r) => r.data)
+  },
+}

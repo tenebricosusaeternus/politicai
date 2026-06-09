@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api } from "../api/client"
 import { Card } from "../components/ui/Card"
 import { useAuth } from "../store/auth"
@@ -19,24 +19,24 @@ export function Admin() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
 
-  if (role !== "admin") return <Navigate to="/" replace />
-
-  const load = () => {
+  const load = useCallback(() => {
     api.get<User[]>("/admin/users").then((r) => {
       setUsers(r.data)
       setLoading(false)
     })
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
 
   const toggleUser = (id: number) => {
     api.patch(`/admin/users/${id}/toggle-active`).then(load)
   }
 
+  if (role !== "admin") return <Navigate to="/" replace />
+
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-xl font-bold text-white">Gestão de Usuários</h1>
+    <div className="p-4 md:p-8 space-y-6 max-w-[1800px] mx-auto">
+      <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Gestão de Usuários</h1>
 
       <Card>
         {loading ? (
@@ -44,9 +44,9 @@ export function Admin() {
             <div className="w-5 h-5 border-2 border-brand-300 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-base">
             <thead>
-              <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-brand-600">
+              <tr className="text-sm text-slate-500 uppercase tracking-wider border-b border-brand-600">
                 <th className="text-left pb-3 font-medium">Nome</th>
                 <th className="text-left pb-3 font-medium">Email</th>
                 <th className="text-left pb-3 font-medium">Perfil</th>
@@ -76,13 +76,13 @@ export function Admin() {
                       {u.is_active ? "Ativo" : "Inativo"}
                     </span>
                   </td>
-                  <td className="py-3 text-slate-500 text-xs">
+                  <td className="py-3 text-slate-500 text-sm">
                     {new Date(u.created_at).toLocaleDateString("pt-BR")}
                   </td>
                   <td className="py-3">
                     <button
                       onClick={() => toggleUser(u.id)}
-                      className="p-1.5 rounded-lg hover:bg-brand-600 transition-colors text-slate-400 hover:text-white"
+                      className="p-2 rounded-lg hover:bg-brand-600 transition-colors text-slate-400 hover:text-white"
                       title={u.is_active ? "Desativar" : "Ativar"}
                     >
                       {u.is_active ? <UserX size={14} /> : <UserCheck size={14} />}
