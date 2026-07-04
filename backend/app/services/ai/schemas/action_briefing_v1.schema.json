@@ -1,0 +1,25 @@
+{
+  "$id": "politicai.action_briefing.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tema", "objetivo_da_acao", "urgencia", "risco_se_ignorar", "publicos_afetados", "onde_responder", "quem_deve_responder", "tom", "mensagens_chave", "resposta_sugerida", "dados_necessarios_antes_de_responder", "checagens_internas", "cuidados_juridicos", "acoes_de_gestao", "monitoramento_pos_resposta", "mencoes_suporte", "confianca"],
+  "properties": {
+    "tema": {"type": "string"},
+    "objetivo_da_acao": {"type": "string"},
+    "urgencia": {"type": "string", "enum": ["baixa", "media", "alta", "critica"]},
+    "risco_se_ignorar": {"type": "string"},
+    "publicos_afetados": {"type": "array"},
+    "onde_responder": {"type": "array"},
+    "quem_deve_responder": {"type": "array"},
+    "tom": {"type": "object"},
+    "mensagens_chave": {"type": "array"},
+    "resposta_sugerida": {"type": "object"},
+    "dados_necessarios_antes_de_responder": {"type": "array"},
+    "checagens_internas": {"type": "array"},
+    "cuidados_juridicos": {"type": "array"},
+    "acoes_de_gestao": {"type": "array"},
+    "monitoramento_pos_resposta": {"type": "array"},
+    "mencoes_suporte": {"type": "array"},
+    "confianca": {"type": "number", "minimum": 0, "maximum": 0.95}
+  }
+}

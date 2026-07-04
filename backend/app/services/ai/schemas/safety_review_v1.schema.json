@@ -1,0 +1,17 @@
+{
+  "$id": "politicai.safety_review.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["aprovado", "severidade", "resumo", "problemas", "campos_a_revisar", "alegacoes_sem_suporte", "recomendacao", "instrucoes_para_correcao", "confianca_revisao"],
+  "properties": {
+    "aprovado": {"type": "boolean"},
+    "severidade": {"type": "string", "enum": ["baixa", "media", "alta", "critica"]},
+    "resumo": {"type": "string"},
+    "problemas": {"type": "array"},
+    "campos_a_revisar": {"type": "array"},
+    "alegacoes_sem_suporte": {"type": "array"},
+    "recomendacao": {"type": "string", "enum": ["aprovar", "revisar", "regerar", "encaminhar_para_humano", "encaminhar_para_juridico"]},
+    "instrucoes_para_correcao": {"type": "array"},
+    "confianca_revisao": {"type": "number", "minimum": 0, "maximum": 0.95}
+  }
+}

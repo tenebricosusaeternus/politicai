@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
-import { LayoutDashboard, FileText, Zap, Users, LogOut, Radio, X, Moon, Sun } from "lucide-react"
+import { Activity, FileText, Users, LogOut, Radio, X, Moon, Sun, ShieldAlert, ClipboardList, BrainCircuit, BarChart3 } from "lucide-react"
 import { useAuth } from "../../store/auth"
 import { applyTheme, getStoredTheme } from "../../utils/theme"
 
 const nav = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/", icon: Activity, label: "Hoje" },
   { to: "/mencoes", icon: Radio, label: "Menções" },
+  { to: "/inteligencia", icon: ShieldAlert, label: "Inteligência" },
+  { to: "/analise", icon: BarChart3, label: "Análise" },
+  { to: "/operacao", icon: ClipboardList, label: "Operação" },
+  { to: "/llm", icon: BrainCircuit, label: "LLM" },
   { to: "/reports", icon: FileText, label: "Relatórios" },
-  { to: "/events", icon: Zap, label: "Eventos" },
+  { to: "/events", icon: ShieldAlert, label: "Crises" },
 ]
 
 interface Props {
@@ -44,7 +48,7 @@ export function Sidebar({ onClose }: Props) {
           <span className="text-xl font-bold text-white tracking-tight">
             Politic<span className="text-brand-300">AI</span>
           </span>
-          <p className="text-sm text-slate-400 mt-0.5">Inteligência Política</p>
+          <p className="text-sm text-slate-400 mt-0.5">War room político</p>
         </div>
         {onClose && (
           <button

@@ -1,0 +1,24 @@
+{
+  "$id": "politicai.crisis.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nivel_alerta", "status", "resumo_executivo", "temas_envolvidos", "orgaos_possivelmente_envolvidos", "fatos_observados", "interpretacoes", "hipoteses", "sinais_de_escalada", "sinais_de_ruido", "atores_citados", "riscos", "acoes_recomendadas", "o_que_nao_fazer", "dados_faltantes", "confianca_geral"],
+  "properties": {
+    "nivel_alerta": {"type": "integer", "minimum": 1, "maximum": 5},
+    "status": {"type": "string", "enum": ["normal", "atencao_baixa", "atencao_operacional", "crise_emergente", "crise_instalada"]},
+    "resumo_executivo": {"type": "string"},
+    "temas_envolvidos": {"type": "array", "items": {"type": "string"}},
+    "orgaos_possivelmente_envolvidos": {"type": "array", "items": {"type": "string"}},
+    "fatos_observados": {"type": "array"},
+    "interpretacoes": {"type": "array"},
+    "hipoteses": {"type": "array"},
+    "sinais_de_escalada": {"type": "array"},
+    "sinais_de_ruido": {"type": "array"},
+    "atores_citados": {"type": "array"},
+    "riscos": {"type": "array"},
+    "acoes_recomendadas": {"type": "object"},
+    "o_que_nao_fazer": {"type": "array"},
+    "dados_faltantes": {"type": "array"},
+    "confianca_geral": {"type": "number", "minimum": 0, "maximum": 0.95}
+  }
+}

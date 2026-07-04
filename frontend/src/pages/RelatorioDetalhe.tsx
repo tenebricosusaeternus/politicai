@@ -8,6 +8,7 @@ import {
   ArrowLeft, Pencil, Check, Download, Loader2, Send, MapPin, Sparkles,
   GripVertical, Trash2, ChevronUp, ChevronDown,
   Heading, Type, Image as ImageIcon, BarChart3, MessageSquareQuote, Hash, Minus,
+  ListChecks, ShieldAlert, Target, Lightbulb, FileCheck2, Layers, Eye, Circle,
 } from "lucide-react"
 import { reportsApi } from "../api/reports"
 import type { RelatorioDetail, Bloco, BlocoTipo } from "../api/reports"
@@ -25,6 +26,16 @@ function nid(): string {
   try { return crypto.randomUUID().slice(0, 10) } catch { return Math.random().toString(36).slice(2, 12) }
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.trim().replace("#", "")
+  if (!/^[0-9a-f]{6}$/i.test(clean)) return [246, 248, 252]
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ]
+}
+
 const TIPOS: { tipo: BlocoTipo; label: string; Icon: typeof Type }[] = [
   { tipo: "titulo", label: "Título", Icon: Heading },
   { tipo: "texto", label: "Texto", Icon: Type },
@@ -33,6 +44,51 @@ const TIPOS: { tipo: BlocoTipo; label: string; Icon: typeof Type }[] = [
   { tipo: "callout", label: "Destaque", Icon: MessageSquareQuote },
   { tipo: "metricas", label: "Métricas", Icon: Hash },
   { tipo: "divisoria", label: "Divisória", Icon: Minus },
+]
+
+const PRESETS: { label: string; desc: string; Icon: typeof Type; tipo: BlocoTipo; dados: unknown }[] = [
+  {
+    label: "Insight estratégico",
+    desc: "Tese, evidência e impacto",
+    Icon: Lightbulb,
+    tipo: "callout",
+    dados: {
+      variante: "info",
+      titulo: "Insight estratégico",
+      texto: "Tese principal:\nEvidência:\nImpacto para a gestão:",
+    },
+  },
+  {
+    label: "Risco político",
+    desc: "Severidade e resposta",
+    Icon: ShieldAlert,
+    tipo: "callout",
+    dados: {
+      variante: "alerta",
+      titulo: "Risco político",
+      texto: "Risco:\nSeveridade:\nProbabilidade:\nResposta recomendada:",
+    },
+  },
+  {
+    label: "Recomendação",
+    desc: "Ação, canal e prazo",
+    Icon: Target,
+    tipo: "callout",
+    dados: {
+      variante: "sucesso",
+      titulo: "Recomendação prioritária",
+      texto: "Ação:\nCanal:\nResponsável:\nPrazo:\nIndicador de sucesso:",
+    },
+  },
+  {
+    label: "Evidência",
+    desc: "Fonte e leitura",
+    Icon: FileCheck2,
+    tipo: "texto",
+    dados: {
+      texto: "Evidência:\nFonte/link:\nLeitura estratégica:\nPor que importa:",
+    },
+  },
 ]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +103,22 @@ function blocoVazio(tipo: BlocoTipo): any {
     case "divisoria": return {}
     default: return {}
   }
+}
+
+function blocoTitulo(bloco: Bloco, index: number): string {
+  const dados = bloco.dados || {}
+  if (bloco.tipo === "titulo" && dados.texto) return String(dados.texto)
+  if (bloco.tipo === "callout" && dados.titulo) return String(dados.titulo)
+  if (bloco.tipo === "hero_resumo") return "Resumo executivo"
+  if (bloco.tipo === "sentimento_painel") return "Clima político"
+  if (bloco.tipo === "performance_oficial") return "Canais oficiais"
+  if (bloco.tipo === "top_posts") return "Top posts"
+  if (bloco.tipo === "temas_principais") return "Temas principais"
+  return `${TIPOS.find((t) => t.tipo === bloco.tipo)?.label || "Bloco"} ${index + 1}`
+}
+
+function hasText(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0
 }
 
 function MedidorAlerta({ nivel, editing, onChange }: { nivel: number; editing: boolean; onChange: (n: number) => void }) {
@@ -90,7 +162,7 @@ export function RelatorioDetalhe() {
       .then((r) => { setRel(r); setBlocos(r.blocos || []) })
       .catch(() => navigate("/reports"))
       .finally(() => setLoading(false))
-  }, [id])
+  }, [id, navigate])
 
   // Persiste o campo no backend (com debounce para edições de texto)
   function patch(campo: keyof RelatorioDetail, valor: unknown, debounce = false) {
@@ -125,6 +197,11 @@ export function RelatorioDetalhe() {
   const addBlocoAt = (tipo: BlocoTipo, pos: number) => {
     const arr = [...blocos]
     arr.splice(pos, 0, { id: nid(), tipo, dados: blocoVazio(tipo) })
+    salvarBlocos(arr, false)
+  }
+  const addPresetAt = (preset: (typeof PRESETS)[number], pos = blocos.length) => {
+    const arr = [...blocos]
+    arr.splice(pos, 0, { id: nid(), tipo: preset.tipo, dados: preset.dados })
     salvarBlocos(arr, false)
   }
   const removerBloco = (i: number) => salvarBlocos(blocos.filter((_, k) => k !== i), false)
@@ -169,17 +246,58 @@ export function RelatorioDetalhe() {
     setExportando(true)
     const eraEdicao = editing
     setEditing(false)
-    await new Promise((r) => setTimeout(r, 200))
+    await new Promise((r) => setTimeout(r, 300))
     try {
-      const canvas = await html2canvas(docRef.current, { backgroundColor: "#0a0f1e", scale: 2, useCORS: true, logging: false })
-      const img = canvas.toDataURL("image/jpeg", 0.92)
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim() || "#f6f8fc"
+      const [br, bgc, bb] = hexToRgb(bg)
       const pdf = new jsPDF("p", "mm", "a4")
       const w = pdf.internal.pageSize.getWidth()
       const h = pdf.internal.pageSize.getHeight()
-      const imgH = (canvas.height * w) / canvas.width
-      let restante = imgH, pos = 0
-      pdf.addImage(img, "JPEG", 0, pos, w, imgH); restante -= h
-      while (restante > 0) { pos -= h; pdf.addPage(); pdf.addImage(img, "JPEG", 0, pos, w, imgH); restante -= h }
+      const margemX = 10
+      const margemY = 10
+      const gap = 4
+      const larguraUtil = w - margemX * 2
+      const alturaUtil = h - margemY * 2
+      let y = margemY
+      let primeiraPagina = true
+
+      const pintarFundo = () => {
+        pdf.setFillColor(br, bgc, bb)
+        pdf.rect(0, 0, w, h, "F")
+      }
+      const novaPagina = () => {
+        if (!primeiraPagina) pdf.addPage()
+        primeiraPagina = false
+        pintarFundo()
+        y = margemY
+      }
+
+      novaPagina()
+      const elementos = Array.from(docRef.current.querySelectorAll<HTMLElement>("[data-pdf-block='true']"))
+      for (const el of elementos) {
+        const canvas = await html2canvas(el, { backgroundColor: bg, scale: 2, useCORS: true, logging: false })
+        const imgH = (canvas.height * larguraUtil) / canvas.width
+        if (imgH <= alturaUtil && y > margemY && y + imgH > h - margemY) novaPagina()
+        const img = canvas.toDataURL("image/jpeg", 0.94)
+
+        if (imgH <= alturaUtil) {
+          pdf.addImage(img, "JPEG", margemX, y, larguraUtil, imgH)
+          y += imgH + gap
+          continue
+        }
+
+        let restante = imgH
+        let pos = y
+        pdf.addImage(img, "JPEG", margemX, pos, larguraUtil, imgH)
+        restante -= (h - margemY - pos)
+        while (restante > 0) {
+          novaPagina()
+          pos = margemY - (imgH - restante)
+          pdf.addImage(img, "JPEG", margemX, pos, larguraUtil, imgH)
+          restante -= alturaUtil
+        }
+        y = h - margemY
+      }
       pdf.save(`Resumo-do-Dia-Belem-${rel.periodo_inicio}.pdf`)
     } catch {
       alert("Erro ao exportar PDF")
@@ -211,26 +329,104 @@ export function RelatorioDetalhe() {
     )
   }
 
-  // Paleta lateral de blocos
-  const Palette = () => (
-    <aside className="hidden lg:block w-44 shrink-0">
-      <div className="sticky top-20 space-y-2">
-        <p className="text-[10px] uppercase tracking-widest text-slate-500 px-1">Inserir bloco</p>
-        <p className="text-[10px] text-slate-600 px-1 leading-snug">Arraste para o documento ou clique para adicionar ao fim.</p>
-        <div className="space-y-1.5">
-          {TIPOS.map(({ tipo, label, Icon }) => (
-            <div
-              key={tipo}
-              draggable
-              onDragStart={(e) => { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", tipo); setArrastando({ tipo }) }}
-              onDragEnd={() => { setArrastando(null); setOverZona(null) }}
-              onClick={() => addBlocoAt(tipo, blocos.length)}
-              className="select-none flex items-center gap-2 bg-brand-800 border border-brand-600 hover:border-brand-400 rounded-lg px-3 py-2 text-sm text-slate-300 hover:text-white cursor-grab active:cursor-grabbing transition-colors"
-            >
-              <Icon size={15} className="text-brand-300 pointer-events-none" /> <span className="pointer-events-none">{label}</span>
+  const checklist = [
+    { label: "Resumo executivo", ok: blocos.some((b) => b.tipo === "hero_resumo" || (b.tipo === "titulo" && /resumo|executivo/i.test(String(b.dados?.texto || "")))) },
+    { label: "Clima e sentimento", ok: blocos.some((b) => b.tipo === "sentimento_painel") },
+    { label: "Temas ou narrativas", ok: blocos.some((b) => b.tipo === "temas_principais" || /tema|narrativa/i.test(JSON.stringify(b.dados || {}))) },
+    { label: "Riscos explicitados", ok: blocos.some((b) => /risco|alerta|crise/i.test(JSON.stringify(b.dados || {}))) || (rel.nivel_alerta || 0) >= 4 },
+    { label: "Recomendações acionáveis", ok: blocos.some((b) => /recomend|ação|responsável|prazo/i.test(JSON.stringify(b.dados || {}))) },
+    { label: "Justificativa do alerta", ok: hasText(rel.nivel_alerta_justificativa) },
+  ]
+  const qualidade = Math.round((checklist.filter((i) => i.ok).length / checklist.length) * 100)
+  const outline = blocos.map((b, i) => ({ id: b.id, label: blocoTitulo(b, i), tipo: b.tipo }))
+
+  const Workbench = () => (
+    <aside className="hidden xl:block w-72 shrink-0">
+      <div className="sticky top-20 space-y-3">
+        <section className="rounded-xl border border-brand-600 bg-brand-800 p-3 shadow-[var(--shadow-card)]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ListChecks size={15} className="text-brand-300" />
+              <p className="text-xs uppercase tracking-widest text-slate-400 font-bold">Qualidade</p>
             </div>
-          ))}
-        </div>
+            <span className={`text-xs font-black ${qualidade >= 80 ? "text-emerald-400" : qualidade >= 50 ? "text-amber-400" : "text-red-400"}`}>{qualidade}%</span>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            {checklist.map((item) => (
+              <div key={item.label} className="flex items-center gap-2 text-xs">
+                {item.ok ? <Check size={13} className="text-emerald-400" /> : <Circle size={12} className="text-slate-600" />}
+                <span className={item.ok ? "text-slate-300" : "text-slate-500"}>{item.label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-brand-600 bg-brand-800 p-3 shadow-[var(--shadow-card)]">
+          <div className="flex items-center gap-2 mb-3">
+            <Layers size={15} className="text-brand-300" />
+            <p className="text-xs uppercase tracking-widest text-slate-400 font-bold">Estrutura</p>
+          </div>
+          <div className="space-y-1 max-h-56 overflow-auto pr-1">
+            <button
+              onClick={() => document.getElementById("relatorio-capa")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className="w-full text-left flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-brand-700 hover:text-white"
+            >
+              <Eye size={12} /> Capa e alerta
+            </button>
+            {outline.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => document.getElementById(`bloco-${item.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                className="w-full text-left rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-brand-700 hover:text-white"
+              >
+                <span className="line-clamp-1">{item.label}</span>
+                <span className="text-[10px] text-slate-600">{item.tipo}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {editing && (
+          <section className="rounded-xl border border-brand-600 bg-brand-800 p-3 shadow-[var(--shadow-card)]">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={15} className="text-brand-300" />
+              <p className="text-xs uppercase tracking-widest text-slate-400 font-bold">Blocos estratégicos</p>
+            </div>
+            <div className="space-y-1.5">
+              {PRESETS.map(({ label, desc, Icon }, idx) => (
+                <button
+                  key={label}
+                  onClick={() => addPresetAt(PRESETS[idx])}
+                  className="w-full text-left flex items-start gap-2 rounded-lg border border-brand-600 bg-brand-900/40 px-3 py-2 hover:border-brand-400 transition-colors"
+                >
+                  <Icon size={15} className="text-brand-300 mt-0.5 shrink-0" />
+                  <span>
+                    <span className="block text-sm text-slate-200">{label}</span>
+                    <span className="block text-[11px] text-slate-500">{desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 border-t border-brand-700 pt-3">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Blocos básicos</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {TIPOS.map(({ tipo, label, Icon }) => (
+                  <button
+                    key={tipo}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", tipo); setArrastando({ tipo }) }}
+                    onDragEnd={() => { setArrastando(null); setOverZona(null) }}
+                    onClick={() => addBlocoAt(tipo, blocos.length)}
+                    className="select-none flex items-center gap-1.5 bg-brand-900/50 border border-brand-600 hover:border-brand-400 rounded-lg px-2 py-1.5 text-xs text-slate-300 hover:text-white cursor-grab active:cursor-grabbing transition-colors"
+                  >
+                    <Icon size={13} className="text-brand-300 pointer-events-none" />
+                    <span className="pointer-events-none truncate">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </aside>
   )
@@ -239,9 +435,9 @@ export function RelatorioDetalhe() {
     <div className={`min-h-screen bg-brand-900 pb-16 ${arrastando ? "select-none" : ""}`}>
       {/* Toolbar */}
       <div className="sticky top-0 z-20 bg-brand-900/90 backdrop-blur border-b border-brand-700">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <button onClick={() => navigate("/reports")} className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={16} /> Relatórios
+            <ArrowLeft size={16} /> Central de relatórios
           </button>
           <div className="flex items-center gap-2">
             {salvando && <span className="text-xs text-slate-500 flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> salvando</span>}
@@ -265,11 +461,11 @@ export function RelatorioDetalhe() {
       <div className="flex justify-center gap-5 px-4">
       <div ref={docRef} className="flex-1 max-w-4xl bg-brand-900 px-2 md:px-10 py-10">
         {/* Capa */}
-        <header className="relative overflow-hidden rounded-3xl border border-brand-600 bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 p-8 md:p-10 mb-8">
+        <header id="relatorio-capa" data-pdf-block="true" className="relative overflow-hidden rounded-2xl border border-brand-600 bg-brand-800 p-8 md:p-10 mb-8 shadow-[var(--shadow-card)]">
           <div className="absolute -top-20 -right-20 w-72 h-72 bg-brand-400/20 rounded-full blur-3xl" />
           <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-8">
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-brand-300"><MapPin size={14} /><span className="text-xs font-semibold uppercase tracking-widest">Belém · Pará</span></div>
+              <div className="flex items-center gap-2 text-brand-300"><MapPin size={14} /><span className="text-xs font-semibold uppercase tracking-widest">Briefing estratégico · Belém</span></div>
               {editing ? (
                 <input value={rel.titulo} onChange={(e) => patch("titulo", e.target.value, true)}
                   className="w-full bg-brand-900/40 border border-brand-400/40 rounded-lg px-3 py-1.5 text-3xl md:text-4xl font-bold text-white outline-none" />
@@ -300,6 +496,8 @@ export function RelatorioDetalhe() {
         {blocos.map((b, i) => (
           <Fragment key={b.id}>
           <div
+            id={`bloco-${b.id}`}
+            data-pdf-block="true"
             className={`group relative ${editing ? "rounded-lg hover:bg-brand-800/30 -mx-2 px-2 py-1" : ""} ${arrastando?.from === i ? "opacity-40" : ""}`}>
 
             {editing && (
@@ -353,13 +551,13 @@ export function RelatorioDetalhe() {
         )}
 
         {/* Rodapé */}
-        <footer className="pt-8 mt-8 border-t border-brand-700 text-center">
+        <footer data-pdf-block="true" className="pt-8 mt-8 border-t border-brand-700 text-center">
           <p className="text-lg font-bold text-white tracking-tight">Politic<span className="text-brand-300">AI</span></p>
           <p className="text-xs text-slate-600 mt-1">Inteligência Política · Monitoramento de Mídia Digital · Belém / PA</p>
         </footer>
       </div>
 
-      {editing && <Palette />}
+      <Workbench />
       </div>
     </div>
   )

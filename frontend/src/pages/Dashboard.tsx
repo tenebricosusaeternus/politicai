@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { format, subDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import ReactECharts from "echarts-for-react"
@@ -142,19 +142,11 @@ export function Dashboard() {
   const [syncInfo, setSyncInfo] = useState<SyncStatus | null>(null)
   const [sincronizando, setSincronizando] = useState(false)
 
-  function carregarSync() {
+  const carregarSync = useCallback(() => {
     dashboardApi.syncStatus().then(setSyncInfo).catch(() => {})
-  }
+  }, [])
 
-  function sincronizarAgora() {
-    setSincronizando(true)
-    dashboardApi.sincronizar(7)
-      .then(() => { carregarSync(); load() })
-      .catch(() => {})
-      .finally(() => setSincronizando(false))
-  }
-
-  function load() {
+  const load = useCallback(() => {
     carregarSync()
     const d1 = dataInicio
     const d2 = dataFim
@@ -224,7 +216,15 @@ export function Dashboard() {
       .then(setHeatmap)
       .catch(() => setHeatmap(null))
       .finally(() => setLoadingHeat(false))
-  }
+  }, [carregarSync, dataFim, dataInicio, heatmapModo])
+
+  const sincronizarAgora = useCallback(() => {
+    setSincronizando(true)
+    dashboardApi.sincronizar(7)
+      .then(() => { carregarSync(); load() })
+      .catch(() => {})
+      .finally(() => setSincronizando(false))
+  }, [carregarSync, load])
 
   function loadHeatmap(modo: HeatmapModo) {
     setHeatmapModo(modo)
@@ -235,7 +235,7 @@ export function Dashboard() {
       .finally(() => setLoadingHeat(false))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
 
   const today = format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })
   const score = sentScore(resumoIgor)

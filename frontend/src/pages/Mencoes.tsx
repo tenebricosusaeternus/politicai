@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { format, subDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { dashboardApi } from "../api/dashboard"
+import { useAuth } from "../store/auth"
 import type { Mencao, Sentimento } from "../api/dashboard"
 import { Card } from "../components/ui/Card"
 import {
@@ -35,6 +36,12 @@ const SENTIMENTO_BTNS: SentimentoBtn[] = [
     active: "bg-red-500/20 text-red-400 border-red-500",
   },
   {
+    value: "NEUTRA",
+    label: "Neutro",
+    style: "text-blue-400 border-blue-500/40 hover:bg-blue-500/10",
+    active: "bg-blue-500/20 text-blue-400 border-blue-500",
+  },
+  {
     value: "IRRELEVANTE",
     label: "Irrelevante",
     style: "text-slate-400 border-slate-500/40 hover:bg-slate-500/10",
@@ -48,6 +55,7 @@ const SENTIMENTO_STYLE: Record<string, string> = {
   NEUTRA: "text-blue-400 bg-blue-400/10 border-blue-400/30",
   IRRELEVANTE: "text-slate-500 bg-slate-500/10 border-slate-500/30",
   SEM_QUALIFICACAO: "text-slate-400 bg-slate-400/10 border-slate-400/30",
+  PENDENTE: "text-amber-400 bg-amber-400/10 border-amber-400/30",
 }
 const SENTIMENTO_LABEL: Record<string, string> = {
   POSITIVA: "Positivo",
@@ -55,7 +63,28 @@ const SENTIMENTO_LABEL: Record<string, string> = {
   NEUTRA: "Neutro",
   IRRELEVANTE: "Irrelevante",
   SEM_QUALIFICACAO: "—",
+  PENDENTE: "Pendente",
 }
+
+const TEMA_OPTIONS = [
+  { value: "", label: "Todos os temas" },
+  { value: "saude", label: "Saúde" },
+  { value: "seguranca", label: "Segurança pública" },
+  { value: "obras", label: "Obras" },
+  { value: "transporte", label: "Transporte" },
+  { value: "limpeza", label: "Limpeza urbana" },
+  { value: "educacao", label: "Educação" },
+  { value: "gestao", label: "Gestão" },
+]
+
+const SENTIMENTO_FILTERS: { value: Sentimento | ""; label: string }[] = [
+  { value: "", label: "Todos úteis" },
+  { value: "PENDENTE", label: "Pendentes" },
+  { value: "POSITIVA", label: "Positivos" },
+  { value: "NEGATIVA", label: "Negativos" },
+  { value: "NEUTRA", label: "Neutros" },
+  { value: "IRRELEVANTE", label: "Irrelevantes" },
+]
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -63,10 +92,17 @@ function fmt(n: number): string {
   return String(n)
 }
 
+function publicadorLabel(nome: string): string {
+  const limpo = (nome || "").trim()
+  if (!limpo || limpo.toLowerCase() === "publicador anônimo") return "Autor não informado"
+  return limpo
+}
+
 function DetalhePanel({
   selected,
   salvando,
   feedback,
+  canEdit,
   onCorrigir,
   onRemover,
   onBack,
@@ -74,6 +110,7 @@ function DetalhePanel({
   selected: Mencao
   salvando: boolean
   feedback: string | null
+  canEdit: boolean
   onCorrigir: (s: Sentimento) => void
   onRemover: () => void
   onBack?: () => void
@@ -97,7 +134,7 @@ function DetalhePanel({
             <p className="text-sm text-slate-500 font-medium uppercase tracking-wider">
               {selected.plataforma || "Plataforma desconhecida"}
             </p>
-            <p className="text-base text-slate-300 font-medium">{selected.publicador_nome || "—"}</p>
+            <p className="text-base text-slate-300 font-medium">{publicadorLabel(selected.publicador_nome)}</p>
             {selected.data && (
               <p className="text-sm text-slate-600">
                 {format(new Date(selected.data), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -170,7 +207,7 @@ function DetalhePanel({
           </div>
         </div>
 
-        {/* Correção manual */}
+        {canEdit && (
         <div className="space-y-2">
           <p className="text-sm text-slate-500 uppercase tracking-wider">Corrigir</p>
           <div className="flex flex-wrap gap-2">
@@ -204,12 +241,15 @@ function DetalhePanel({
             </p>
           )}
         </div>
+        )}
       </div>
     </Card>
   )
 }
 
 export function Mencoes() {
+  const { role } = useAuth()
+  const isAdmin = role === "admin"
   const hoje = new Date()
   const [dataInicio, setDataInicio] = useState(format(subDays(hoje, 6), "yyyy-MM-dd"))
   const [dataFim, setDataFim] = useState(format(hoje, "yyyy-MM-dd"))
@@ -224,9 +264,10 @@ export function Mencoes() {
   const [reclassificando, setReclassificando] = useState(false)
   const [limpando, setLimpando] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [mostrarIrrelevantes, setMostrarIrrelevantes] = useState(false)
+  const [sentimentoFiltro, setSentimentoFiltro] = useState<Sentimento | "">("")
+  const [temaFiltro, setTemaFiltro] = useState("")
 
-  function load(p = 0, incluirIrrelevantes = mostrarIrrelevantes) {
+  const load = useCallback((p = 0) => {
     setLoading(true)
     setErro("")
     setPagina(p)
@@ -237,7 +278,9 @@ export function Mencoes() {
         dataFim,
         pagina: p,
         tamanho: 20,
-        incluirIrrelevantes,
+        incluirIrrelevantes: sentimentoFiltro === "IRRELEVANTE",
+        sentimento: sentimentoFiltro,
+        tema: temaFiltro,
       })
       .then((r) => {
         setMencoes(r.items)
@@ -247,9 +290,9 @@ export function Mencoes() {
       })
       .catch((e) => setErro(e?.response?.data?.detail || e.message || "Erro"))
       .finally(() => setLoading(false))
-  }
+  }, [dataFim, dataInicio, sentimentoFiltro, temaFiltro])
 
-  useEffect(() => { load(0) }, [])
+  useEffect(() => { load(0) }, [load])
 
   function handleReclassificar() {
     setReclassificando(true)
@@ -281,22 +324,45 @@ export function Mencoes() {
     setTimeout(() => setFeedback(null), 3000)
   }
 
-  function handleCorrigir(sentimento: Sentimento) {
-    if (!selected) return
+  function selecionarProximaMenção(currentId: number, lista: Mencao[]) {
+    const idx = lista.findIndex((m) => m.id === currentId)
+    const next = lista[idx + 1] ?? lista[idx - 1] ?? null
+    if (next) {
+      setSelected(next)
+      return
+    }
+    setSelected(null)
+    if (pagina < paginas - 1) load(pagina + 1)
+  }
+
+  function deveManterNaLista(sentimento: Sentimento) {
+    if (!sentimentoFiltro) return sentimento !== "IRRELEVANTE"
+    return sentimentoFiltro === sentimento
+  }
+
+  function handleCorrigir(sentimento: Sentimento, target = selected) {
+    if (!target) return
+    const currentId = target.id
     setSalvando(true)
     dashboardApi
-      .corrigirSentimento(selected.id, sentimento, {
-        monitoramentoId: selected.monitoramento_id ?? 1853,
-        textoSnapshot: selected.texto,
-        plataforma: selected.plataforma,
-        publicadorNome: selected.publicador_nome,
-        sentimentoVtracker: selected.sentimento_vtracker,
+      .corrigirSentimento(target.id, sentimento, {
+        monitoramentoId: target.monitoramento_id ?? 1853,
+        textoSnapshot: target.texto,
+        plataforma: target.plataforma,
+        publicadorNome: target.publicador_nome,
+        sentimentoVtracker: target.sentimento_vtracker,
         observacao: "",
       })
       .then(() => {
-        const updated: Mencao = { ...selected, sentimento, corrigido: true, source: "manual" }
-        setSelected(updated)
-        setMencoes((prev) => prev.map((m) => (m.id === selected.id ? updated : m)))
+        const updated: Mencao = { ...target, sentimento, corrigido: true, source: "manual" }
+        setMencoes((prev) => {
+          const nextList = deveManterNaLista(sentimento)
+            ? prev.map((m) => (m.id === currentId ? updated : m))
+            : prev.filter((m) => m.id !== currentId)
+          selecionarProximaMenção(currentId, nextList)
+          return nextList
+        })
+        if (!deveManterNaLista(sentimento)) setTotal((t) => Math.max(0, t - 1))
         showFeedback("Sentimento corrigido!")
       })
       .catch(() => showFeedback("Erro ao salvar"))
@@ -350,38 +416,52 @@ export function Mencoes() {
           >
             {loading ? "..." : "Filtrar"}
           </button>
-          <label className="flex items-center gap-2 bg-brand-800 border border-brand-600 rounded-lg px-4 py-3 text-base text-slate-300 cursor-pointer shadow-[var(--shadow-card)]">
-            <input
-              type="checkbox"
-              checked={mostrarIrrelevantes}
-              onChange={(e) => {
-                const checked = e.target.checked
-                setMostrarIrrelevantes(checked)
-                setPagina(0)
-                load(0, checked)
-              }}
-              className="accent-brand-400"
-            />
-            Mostrar irrelevantes
-          </label>
-          <button
-            onClick={handleReclassificar}
-            disabled={reclassificando || loading || limpando}
-            className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-base font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap shadow-sm"
-            title="Reclassifica as menções do período usando o Qwen local"
+          <select
+            value={sentimentoFiltro}
+            onChange={(e) => {
+              setSentimentoFiltro(e.target.value as Sentimento | "")
+              setPagina(0)
+            }}
+            className="bg-brand-800 border border-brand-600 rounded-lg px-4 py-3 text-base text-slate-200 outline-none shadow-[var(--shadow-card)]"
           >
-            <Sparkles size={14} />
-            {reclassificando ? "Classificando..." : "IA: Reclassificar"}
-          </button>
-          <button
-            onClick={handleLimparReclassificar}
-            disabled={limpando || reclassificando || loading}
-            className="flex items-center gap-2 bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-white text-base font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap shadow-sm"
-            title="Apaga todas as classificações IA e reclassifica do zero (últimos 30 dias)"
+            {SENTIMENTO_FILTERS.map((opt) => (
+              <option key={opt.value || "todos"} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <select
+            value={temaFiltro}
+            onChange={(e) => {
+              setTemaFiltro(e.target.value)
+              setPagina(0)
+            }}
+            className="bg-brand-800 border border-brand-600 rounded-lg px-4 py-3 text-base text-slate-200 outline-none shadow-[var(--shadow-card)]"
           >
-            <Trash2 size={14} />
-            {limpando ? "Limpando..." : "Limpar e Reclassificar"}
-          </button>
+            {TEMA_OPTIONS.map((opt) => (
+              <option key={opt.value || "todos"} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          {isAdmin && (
+            <>
+              <button
+                onClick={handleReclassificar}
+                disabled={reclassificando || loading || limpando}
+                className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-base font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap shadow-sm"
+                title="Reclassifica as menções do período usando o Qwen local"
+              >
+                <Sparkles size={14} />
+                {reclassificando ? "Classificando..." : "IA: Reclassificar"}
+              </button>
+              <button
+                onClick={handleLimparReclassificar}
+                disabled={limpando || reclassificando || loading}
+                className="flex items-center gap-2 bg-rose-700 hover:bg-rose-600 disabled:opacity-50 text-white text-base font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap shadow-sm"
+                title="Apaga todas as classificações IA e reclassifica do zero (últimos 30 dias)"
+              >
+                <Trash2 size={14} />
+                {limpando ? "Limpando..." : "Limpar e Reclassificar"}
+              </button>
+            </>
+          )}
         </div>
         {feedback && (
           <p className="text-sm text-green-400 flex items-center gap-1.5">
@@ -399,6 +479,7 @@ export function Mencoes() {
             selected={selected}
             salvando={salvando}
             feedback={feedback}
+            canEdit={isAdmin}
             onCorrigir={handleCorrigir}
             onRemover={handleRemoverCorrecao}
             onBack={() => setSelected(null)}
@@ -446,9 +527,14 @@ export function Mencoes() {
           ) : (
             <div className="space-y-1.5 lg:max-h-[calc(100vh-220px)] overflow-y-auto pr-1">
               {mencoes.map((m) => (
-                <button
+                <div
                   key={`${m.id}-${m.monitoramento_id}`}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelected(m)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") setSelected(m)
+                  }}
                   className={`w-full text-left p-4 rounded-lg border transition-colors shadow-[var(--shadow-card)] ${
                     m.sentimento === "IRRELEVANTE"
                       ? "opacity-40 hover:opacity-70"
@@ -475,13 +561,35 @@ export function Mencoes() {
                       </span>
                     )}
                     <span className="text-sm text-slate-500 truncate max-w-[140px]">{m.plataforma}</span>
+                    {!m.publicador_nome && (
+                      <span className="text-sm text-slate-600">Autor não informado</span>
+                    )}
                     {m.data && (
                       <span className="text-sm text-slate-600">
                         {format(new Date(m.data), "dd/MM HH:mm", { locale: ptBR })}
                       </span>
                     )}
                   </div>
-                </button>
+                  {isAdmin && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {SENTIMENTO_BTNS.map((btn) => (
+                        <button
+                          key={btn.value}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleCorrigir(btn.value, m)
+                          }}
+                          disabled={salvando}
+                          className={`text-xs px-2.5 py-1 rounded border transition-colors disabled:opacity-50 ${
+                            m.sentimento === btn.value ? btn.active : btn.style
+                          }`}
+                        >
+                          {btn.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -494,6 +602,7 @@ export function Mencoes() {
               selected={selected}
               salvando={salvando}
               feedback={feedback}
+              canEdit={isAdmin}
               onCorrigir={handleCorrigir}
               onRemover={handleRemoverCorrecao}
             />

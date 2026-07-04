@@ -5,7 +5,7 @@ Fluxo:
   1. Divide o período em janelas de 4 h por monitor
   2. Busca cada janela em paralelo (ThreadPoolExecutor)
   3. Faz upsert na tabela `mencoes` (INSERT … ON CONFLICT DO NOTHING)
-  4. Classifica com LLM as menções ainda não processadas
+  4. Deixa a classificação LLM para o job dedicado de pendências
 
 O V-Tracker não suporta paginação real — ignora o parâmetro `pagina` e
 sempre devolve os primeiros ~10 itens. A estratégia de janelas de 4 h
@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.mencao import Mencao
@@ -24,6 +25,7 @@ from app.models.sentimento_override import SentimentoOverride
 from app.models.sync_state import SyncState
 from app.services.vtracker.client import vtracker, MONITORAMENTOS
 from app.services.llm_sentiment import classificar_sentimento, classificar_lote_llm
+from app.services.hygiene import higienizar_mencoes_pendentes
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,9 @@ SYNC_WORKERS = 15          # chamadas paralelas ao V-Tracker
 LLM_BATCH_SIZE = 50        # menções processadas por rodada de LLM
 LLM_SYNC_BATCH_SIZE = 60   # maior lote estável observado no MLX/Qwen local
 LLM_CLASSIFY_WORKERS = 1   # o servidor MLX/Qwen local não suporta paralelismo estável
-RESET_MENTIONS_ON_SYNC = True  # fase de teste: evita duplicados/sujeira antiga
+RESET_MENTIONS_ON_SYNC = False  # não apaga a base antes de chamadas externas
+SYNC_LOCK_ID = 2026060901
+CLASSIFY_LOCK_ID = 2026060902
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -203,81 +207,114 @@ def sincronizar_periodo(
     Puxa todos os monitores para o período e upserta no banco.
     Retorna {"novos": N, "janelas": M, "erros": K}.
     """
-    reset_info = resetar_banco_mencoes(db) if resetar else {"mencoes_removidas": 0, "overrides_removidos": 0}
-    windows = _gerar_janelas(d_inicio, d_fim)
-    tasks = [(mid, ini, fim)
-             for mid in MONITORAMENTOS.values()
-             for (ini, fim) in windows]
-
-    all_rows: list = []
-    with ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
-        futures = [pool.submit(_fetch_janela, mid, ini, fim) for mid, ini, fim in tasks]
-        for future in as_completed(futures):
-            try:
-                all_rows.extend(future.result())
-            except Exception:
-                pass
-
-    if not all_rows:
-        registrar_sync(db, "ok", f"0 itens ({len(tasks)} janelas)")
-        return {"novos": 0, "classificadas": 0, "janelas": len(tasks), "erros": 0, **reset_info}
-
-    # Remove duplicatas dentro do próprio batch (mesmo id de monitors diferentes)
-    seen_ids: set = set()
-    unique_rows = []
-    for row in all_rows:
-        if row["id"] not in seen_ids:
-            seen_ids.add(row["id"])
-            unique_rows.append(row)
-
-    # Upsert: insere somente se o id ainda não existir
-    # Não atualiza registros existentes para preservar sentimento_llm já processado
-    stmt = pg_insert(Mencao).values(unique_rows)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["id"],
-        set_={
-            # Atualiza campos mutáveis (engajamento pode crescer)
-            "likes": stmt.excluded.likes,
-            "shares": stmt.excluded.shares,
-            "comentarios": stmt.excluded.comentarios,
-            "atualizado_em": datetime.utcnow(),
+    lock_adquirido = bool(db.execute(text("select pg_try_advisory_lock(:lock_id)"), {"lock_id": SYNC_LOCK_ID}).scalar())
+    if not lock_adquirido:
+        registrar_sync(db, "em_andamento", "sync já está em execução")
+        return {
+            "novos": 0,
+            "classificadas": 0,
+            "janelas": 0,
+            "erros": 1,
+            "em_execucao": True,
         }
-    )
-    db.execute(stmt)
-    db.commit()
 
-    novos = len(unique_rows)
-    logger.info("Sync: %d items upsertados (%d janelas × %d monitores)", novos, len(windows), len(MONITORAMENTOS))
-    classificadas = classificar_todos_pendentes(db, batch=LLM_SYNC_BATCH_SIZE) if classificar else 0
-    relevantes = (
-        db.query(Mencao)
-        .filter(Mencao.llm_processado == True)  # noqa: E712
-        .filter(Mencao.sentimento_llm != "IRRELEVANTE")
-        .count()
-    )
-    irrelevantes = (
-        db.query(Mencao)
-        .filter(Mencao.llm_processado == True)  # noqa: E712
-        .filter(Mencao.sentimento_llm == "IRRELEVANTE")
-        .count()
-    )
-    registrar_sync(db, "ok", f"{novos} itens, {classificadas} classificados, {relevantes} relevantes")
-    return {
-        "novos": novos,
-        "classificadas": classificadas,
-        "relevantes": relevantes,
-        "irrelevantes": irrelevantes,
-        "janelas": len(tasks),
-        "erros": 0,
-        **reset_info,
-    }
+    try:
+        registrar_sync(db, "em_andamento", f"sync {d_inicio.isoformat()}..{d_fim.isoformat()}")
+        reset_info = resetar_banco_mencoes(db) if resetar else {"mencoes_removidas": 0, "overrides_removidos": 0}
+        windows = _gerar_janelas(d_inicio, d_fim)
+        tasks = [(mid, ini, fim)
+                 for mid in MONITORAMENTOS.values()
+                 for (ini, fim) in windows]
+
+        all_rows: list = []
+        with ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
+            futures = [pool.submit(_fetch_janela, mid, ini, fim) for mid, ini, fim in tasks]
+            for future in as_completed(futures):
+                try:
+                    all_rows.extend(future.result())
+                except Exception:
+                    pass
+
+        if not all_rows:
+            registrar_sync(db, "ok", f"0 itens ({len(tasks)} janelas)")
+            return {"novos": 0, "classificadas": 0, "janelas": len(tasks), "erros": 0, **reset_info}
+
+        # Remove duplicatas dentro do próprio batch (mesmo id de monitors diferentes)
+        seen_ids: set = set()
+        unique_rows = []
+        for row in all_rows:
+            if row["id"] not in seen_ids:
+                seen_ids.add(row["id"])
+                unique_rows.append(row)
+
+        # Upsert: atualiza somente campos mutáveis para preservar sentimento_llm já processado
+        stmt = pg_insert(Mencao).values(unique_rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "likes": stmt.excluded.likes,
+                "shares": stmt.excluded.shares,
+                "comentarios": stmt.excluded.comentarios,
+                "atualizado_em": datetime.utcnow(),
+            }
+        )
+        db.execute(stmt)
+        db.commit()
+
+        novos = len(unique_rows)
+        logger.info("Sync: %d items upsertados (%d janelas × %d monitores)", novos, len(windows), len(MONITORAMENTOS))
+        higiene = higienizar_mencoes_pendentes(db, limite=5000) if classificar else {}
+        classificadas = classificar_todos_pendentes(db, batch=LLM_SYNC_BATCH_SIZE) if classificar else 0
+        relevantes = (
+            db.query(Mencao)
+            .filter(Mencao.llm_processado == True)  # noqa: E712
+            .filter(Mencao.sentimento_llm != "IRRELEVANTE")
+            .count()
+        )
+        irrelevantes = (
+            db.query(Mencao)
+            .filter(Mencao.llm_processado == True)  # noqa: E712
+            .filter(Mencao.sentimento_llm == "IRRELEVANTE")
+            .count()
+        )
+        filtradas = higiene.get("marcadas_irrelevantes", 0) + higiene.get("duplicadas", 0) if higiene else 0
+        registrar_sync(db, "ok", f"{novos} itens, {filtradas} filtrados, {classificadas} classificados, {relevantes} relevantes")
+        return {
+            "novos": novos,
+            "pre_filtradas": filtradas,
+            "higiene": higiene,
+            "classificadas": classificadas,
+            "relevantes": relevantes,
+            "irrelevantes": irrelevantes,
+            "janelas": len(tasks),
+            "erros": 0,
+            **reset_info,
+        }
+    except Exception as e:
+        registrar_sync(db, "erro", str(e))
+        raise
+    finally:
+        db.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": SYNC_LOCK_ID})
+        db.commit()
 
 
 def sincronizar_recente(db: Session, dias: int = 7, resetar: bool = RESET_MENTIONS_ON_SYNC) -> dict:
     """Sincroniza os últimos N dias de todos os monitores."""
     hoje = date.today()
     d_inicio = hoje - timedelta(days=dias - 1)
-    return sincronizar_periodo(db, d_inicio, hoje, resetar=resetar, classificar=True)
+    return sincronizar_periodo(db, d_inicio, hoje, resetar=resetar, classificar=False)
+
+
+def _try_classify_lock(db: Session) -> bool:
+    return bool(db.execute(
+        text("select pg_try_advisory_lock(:lock_id)"),
+        {"lock_id": CLASSIFY_LOCK_ID},
+    ).scalar())
+
+
+def _release_classify_lock(db: Session) -> None:
+    db.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": CLASSIFY_LOCK_ID})
+    db.commit()
 
 
 # ─── classificação LLM ───────────────────────────────────────────────────────
@@ -287,28 +324,36 @@ def classificar_pendentes(db: Session, limite: int = LLM_BATCH_SIZE) -> int:
     Classifica as menções que ainda não foram processadas pela LLM.
     Retorna o número de menções classificadas nesta rodada.
     """
-    pendentes = (
-        db.query(Mencao)
-        .filter(Mencao.llm_processado == False)  # noqa: E712
-        .order_by(Mencao.data.desc())
-        .limit(limite)
-        .all()
-    )
-
-    if not pendentes:
+    if not _try_classify_lock(db):
+        logger.info("Classificação já está em execução")
         return 0
 
-    for m in pendentes:
-        texto = m.texto or m.titulo or ""
-        lab = classificar_sentimento(texto)
-        if lab:
-            m.sentimento_llm = lab
-            m.llm_processado = True
+    try:
+        higienizar_mencoes_pendentes(db, limite=max(limite * 5, 100))
+        pendentes = (
+            db.query(Mencao)
+            .filter(Mencao.llm_processado == False)  # noqa: E712
+            .order_by(Mencao.data.desc())
+            .limit(limite)
+            .all()
+        )
 
-    db.commit()
-    classificadas = sum(1 for m in pendentes if m.llm_processado)
-    logger.info("LLM: %d menções classificadas", classificadas)
-    return classificadas
+        if not pendentes:
+            return 0
+
+        for m in pendentes:
+            texto = m.texto or m.titulo or ""
+            lab = classificar_sentimento(texto)
+            if lab:
+                m.sentimento_llm = lab
+                m.llm_processado = True
+
+        db.commit()
+        classificadas = sum(1 for m in pendentes if m.llm_processado)
+        logger.info("LLM: %d menções classificadas", classificadas)
+        return classificadas
+    finally:
+        _release_classify_lock(db)
 
 
 def _chunks(seq: list, size: int) -> list[list]:
@@ -336,54 +381,62 @@ def classificar_todos_pendentes(
     Cada worker faz uma chamada HTTP independente ao Qwen local.
     Retorna o total classificado.
     """
+    if not _try_classify_lock(db):
+        logger.info("Classificação já está em execução")
+        return 0
+
     processados = 0
-    workers = max(1, workers)
-    batch = max(1, batch)
-    while True:
-        limite = batch * workers
-        if max_total:
-            limite = min(limite, max_total - processados)
-            if limite <= 0:
+    try:
+        workers = max(1, workers)
+        batch = max(1, batch)
+        while True:
+            higienizar_mencoes_pendentes(db, limite=max(batch * workers * 5, 250))
+            limite = batch * workers
+            if max_total:
+                limite = min(limite, max_total - processados)
+                if limite <= 0:
+                    break
+
+            pendentes = (
+                db.query(Mencao)
+                .filter(Mencao.llm_processado == False)  # noqa: E712
+                .order_by(Mencao.data.desc())
+                .limit(limite)
+                .all()
+            )
+            if not pendentes:
                 break
 
-        pendentes = (
-            db.query(Mencao)
-            .filter(Mencao.llm_processado == False)  # noqa: E712
-            .order_by(Mencao.data.desc())
-            .limit(limite)
-            .all()
-        )
-        if not pendentes:
-            break
+            textos = [(m.texto or m.titulo or "") for m in pendentes]
+            labels: list[str] = []
+            partes = _chunks(textos, batch)
+            with ThreadPoolExecutor(max_workers=min(workers, len(partes))) as pool:
+                futures = [pool.submit(_classificar_chunk, parte) for parte in partes]
+                for future in futures:
+                    labels.extend(future.result())
 
-        textos = [(m.texto or m.titulo or "") for m in pendentes]
-        labels: list[str] = []
-        partes = _chunks(textos, batch)
-        with ThreadPoolExecutor(max_workers=min(workers, len(partes))) as pool:
-            futures = [pool.submit(_classificar_chunk, parte) for parte in partes]
-            for future in futures:
-                labels.extend(future.result())
+            classificadas_rodada = 0
+            for m, lab in zip(pendentes, labels):
+                if not lab:
+                    continue
+                m.sentimento_llm = lab
+                m.llm_processado = True
+                classificadas_rodada += 1
+            db.commit()
 
-        classificadas_rodada = 0
-        for m, lab in zip(pendentes, labels):
-            if not lab:
-                continue
-            m.sentimento_llm = lab
-            m.llm_processado = True
-            classificadas_rodada += 1
-        db.commit()
+            if classificadas_rodada == 0:
+                raise RuntimeError("LLM indisponível: nenhuma menção foi classificada nesta rodada")
 
-        if classificadas_rodada == 0:
-            raise RuntimeError("LLM indisponível: nenhuma menção foi classificada nesta rodada")
-
-        processados += classificadas_rodada
-        logger.info(
-            "Classificação paralela: %d processados nesta execução (%d por chamada × %d workers)",
-            processados,
-            batch,
-            workers,
-        )
-    return processados
+            processados += classificadas_rodada
+            logger.info(
+                "Classificação paralela: %d processados nesta execução (%d por chamada × %d workers)",
+                processados,
+                batch,
+                workers,
+            )
+        return processados
+    finally:
+        _release_classify_lock(db)
 
 
 def total_pendentes(db: Session) -> int:

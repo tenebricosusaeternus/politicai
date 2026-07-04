@@ -1,0 +1,19 @@
+{
+  "$id": "politicai.audit.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resumo_auditoria", "itens"],
+  "properties": {
+    "resumo_auditoria": {
+      "type": "object",
+      "required": ["total_itens", "provaveis_erros", "revisao_humana_recomendada", "principais_padroes"],
+      "properties": {
+        "total_itens": {"type": "integer", "minimum": 0},
+        "provaveis_erros": {"type": "integer", "minimum": 0},
+        "revisao_humana_recomendada": {"type": "integer", "minimum": 0},
+        "principais_padroes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "itens": {"type": "array", "items": {"type": "object"}}
+  }
+}

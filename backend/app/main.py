@@ -8,12 +8,16 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 import os
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.api.v1.router import router
+from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal
+from app.services.ai.llm_router import configured_models
 import app.models  # garante que os models são registrados antes do create_all
 
 # Diretório de uploads (imagens dos relatórios)
@@ -99,4 +103,23 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    checks = {"database": False, "llm": False, "llm_models": configured_models()}
+
+    db = SessionLocal()
+    try:
+        db.execute(text("select 1"))
+        checks["database"] = True
+    except Exception as e:
+        checks["database_error"] = str(e)
+    finally:
+        db.close()
+
+    try:
+        with httpx.Client(timeout=2) as client:
+            resp = client.get(f"{settings.LLM_BASE_URL}/models")
+            checks["llm"] = resp.status_code < 500
+    except Exception as e:
+        checks["llm_error"] = str(e)
+
+    status = "ok" if checks["database"] else "degraded"
+    return {"status": status, "checks": checks}

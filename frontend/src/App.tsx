@@ -7,6 +7,10 @@ import { RelatorioDetalhe } from "./pages/RelatorioDetalhe"
 import { Events } from "./pages/Events"
 import { Admin } from "./pages/Admin"
 import { Mencoes } from "./pages/Mencoes"
+import { Inteligencia } from "./pages/Inteligencia"
+import { Operacao } from "./pages/Operacao"
+import { LlmOps } from "./pages/LlmOps"
+import { Analise } from "./pages/Analise"
 
 export default function App() {
   return (
@@ -16,6 +20,10 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/mencoes" element={<Mencoes />} />
+          <Route path="/inteligencia" element={<Inteligencia />} />
+          <Route path="/analise" element={<Analise />} />
+          <Route path="/operacao" element={<Operacao />} />
+          <Route path="/llm" element={<LlmOps />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/reports/:id" element={<RelatorioDetalhe />} />
           <Route path="/events" element={<Events />} />

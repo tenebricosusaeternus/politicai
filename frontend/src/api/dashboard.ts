@@ -31,7 +31,7 @@ export interface SerieTemporal {
   serie: ResumoDia[]
 }
 
-export type Sentimento = "POSITIVA" | "NEGATIVA" | "NEUTRA" | "SEM_QUALIFICACAO" | "IRRELEVANTE"
+export type Sentimento = "POSITIVA" | "NEGATIVA" | "NEUTRA" | "SEM_QUALIFICACAO" | "IRRELEVANTE" | "PENDENTE"
 
 export interface Mencao {
   id: number
@@ -306,6 +306,8 @@ export const dashboardApi = {
     pagina?: number
     tamanho?: number
     incluirIrrelevantes?: boolean
+    sentimento?: Sentimento | ""
+    tema?: string
   }): Promise<ListaMencoes> {
     const params: Record<string, string | number | boolean> = {
       monitoramento: opts.monitoramento ?? "todos",
@@ -315,6 +317,8 @@ export const dashboardApi = {
     }
     if (opts.dataInicio) params.data_inicio = opts.dataInicio
     if (opts.dataFim) params.data_fim = opts.dataFim
+    if (opts.sentimento) params.sentimento = opts.sentimento
+    if (opts.tema) params.tema = opts.tema
     return api.get("/dashboard/mencoes-recentes", { params }).then((r) => r.data)
   },
 

@@ -10,3 +10,4 @@ from app.models.official_insight import (
     OfficialInsightSnapshot,
     OfficialPost,
 )
+from app.models.operation import HygieneAudit, PoliticalEntity, CrisisCase

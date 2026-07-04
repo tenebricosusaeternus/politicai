@@ -1,0 +1,42 @@
+{
+  "$id": "politicai.entities.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "entidades", "resumo_entidades", "confianca_geral"],
+  "properties": {
+    "id": {"type": "string"},
+    "entidades": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tipo", "texto", "canonical_name", "confianca", "ambigua", "evidencia", "observacao"],
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": ["pessoa", "politico", "orgao_municipal", "orgao_externo", "bairro", "localidade", "local_equipamento", "programa_obra", "veiculo_fonte", "evento", "partido_movimento", "empresa", "outro"]
+          },
+          "texto": {"type": "string"},
+          "canonical_name": {"type": ["string", "null"]},
+          "confianca": {"type": "number", "minimum": 0, "maximum": 0.95},
+          "ambigua": {"type": "boolean"},
+          "evidencia": {"type": "string"},
+          "observacao": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "resumo_entidades": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tem_prefeito", "tem_prefeitura", "tem_orgao_municipal", "tem_bairro_local", "tem_denuncia_ou_controle"],
+      "properties": {
+        "tem_prefeito": {"type": "boolean"},
+        "tem_prefeitura": {"type": "boolean"},
+        "tem_orgao_municipal": {"type": "boolean"},
+        "tem_bairro_local": {"type": "boolean"},
+        "tem_denuncia_ou_controle": {"type": "boolean"}
+      }
+    },
+    "confianca_geral": {"type": "number", "minimum": 0, "maximum": 0.95}
+  }
+}

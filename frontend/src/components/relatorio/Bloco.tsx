@@ -2,6 +2,8 @@ import ReactECharts from "echarts-for-react"
 import {
   Info, CheckCircle2, AlertTriangle, ImagePlus, Loader2, X,
   BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon,
+  TrendingUp, TrendingDown, MessageCircle,
+  ExternalLink,
 } from "lucide-react"
 import { useState } from "react"
 import type { Bloco, GraficoDados, MetricaItem } from "../../api/reports"
@@ -15,12 +17,78 @@ interface Props {
 }
 
 const CORES = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6"]
+const ZONAS_SENTIMENTO = [
+  { label: "Crise", max: 20, color: "#dc2626", desc: "Clima muito negativo" },
+  { label: "Alerta", max: 40, color: "#ea580c", desc: "Pressão crescente" },
+  { label: "Moderado", max: 60, color: "#ca8a04", desc: "Equilíbrio entre apoios e críticas" },
+  { label: "Favorável", max: 80, color: "#16a34a", desc: "Boa percepção pública" },
+  { label: "Ótimo", max: 101, color: "#15803d", desc: "Clima muito positivo" },
+] as const
+
+function fmt(n: number): string {
+  if (!Number.isFinite(n)) return "0"
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(Math.round(n))
+}
+
+function pct(part: number, total: number): number {
+  return total ? Math.round((part / total) * 100) : 0
+}
+
+function scoreParaGauge(score: number): number {
+  return Math.max(0, Math.min(100, 50 + score))
+}
+
+function zonaSentimento(v: number) {
+  return ZONAS_SENTIMENTO.find((z) => v < z.max) ?? ZONAS_SENTIMENTO[ZONAS_SENTIMENTO.length - 1]
+}
+
+function deltaText(delta?: { pct: number | null; delta: number }) {
+  if (!delta) return ""
+  if (delta.pct === null) return "novo"
+  return `${delta.pct > 0 ? "+" : ""}${delta.pct}%`
+}
+
+function deltaClass(delta?: { pct: number | null; delta: number }) {
+  if (!delta) return "text-slate-500"
+  if (Number(delta.delta || 0) > 0) return "text-emerald-500"
+  if (Number(delta.delta || 0) < 0) return "text-red-500"
+  return "text-slate-500"
+}
+
+function postEmbedUrl(link: string, rede: string): string {
+  if (!link) return ""
+  if (rede === "Instagram") return `${link.replace(/\/?(\?.*)?$/, "")}/embed`
+  if (rede === "Facebook") {
+    const endpoint = link.includes("/reel/") || link.includes("/videos/")
+      ? "https://www.facebook.com/plugins/video.php"
+      : "https://www.facebook.com/plugins/post.php"
+    return `${endpoint}?href=${encodeURIComponent(link)}&show_text=false&width=320`
+  }
+  return ""
+}
 
 export function BlocoView({ bloco, editing, onChange }: Props) {
   const d = bloco.dados || {}
   const set = (campo: string, valor: unknown) => onChange({ ...d, [campo]: valor })
 
   switch (bloco.tipo) {
+    case "hero_resumo":
+      return <HeroResumo dados={d} />
+
+    case "sentimento_painel":
+      return <SentimentoPainel dados={d} />
+
+    case "performance_oficial":
+      return <PerformanceOficial dados={d} />
+
+    case "top_posts":
+      return <TopPosts dados={d} />
+
+    case "temas_principais":
+      return <TemasPrincipais dados={d} />
+
     // ── Título ──
     case "titulo": {
       const nivel = d.nivel || 2
@@ -166,6 +234,391 @@ export function BlocoView({ bloco, editing, onChange }: Props) {
     default:
       return <p className="text-xs text-slate-500">Bloco desconhecido: {bloco.tipo}</p>
   }
+}
+
+function HeroResumo({ dados }: { dados: Record<string, unknown> }) {
+  const kpis = (dados.kpis as Array<{ label: string; valor: string; sub?: string }>) || []
+  const nivel = Number(dados.nivel_alerta || 3)
+  const justificativa = String(dados.justificativa || "")
+  const nivelCfg = nivel >= 4
+    ? { label: "Atenção alta", cls: "text-red-500 bg-red-500/10 border-red-500/30" }
+    : nivel === 3
+      ? { label: "Atenção", cls: "text-amber-500 bg-amber-500/10 border-amber-500/30" }
+      : { label: "Estável", cls: "text-emerald-500 bg-emerald-500/10 border-emerald-500/30" }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-brand-600 bg-brand-800 p-6 md:p-7 shadow-[var(--shadow-card)]">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-widest text-brand-300 font-bold">Belém · Resumo Executivo</p>
+          <h2 className="text-3xl font-black text-white tracking-tight">{String(dados.titulo || "Resumo do Dia")}</h2>
+          <p className="text-sm text-slate-500">{String(dados.subtitulo || "")}</p>
+        </div>
+        <div className={`rounded-xl border px-4 py-3 min-w-[150px] ${nivelCfg.cls}`}>
+          <p className="text-xs uppercase tracking-widest font-bold">Nível {nivel}/5</p>
+          <p className="text-lg font-bold">{nivelCfg.label}</p>
+        </div>
+      </div>
+
+      {justificativa && (
+        <p className="mt-5 text-base text-slate-300 leading-relaxed max-w-4xl">{justificativa}</p>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+        {kpis.map((kpi) => (
+          <div key={kpi.label} className="rounded-xl border border-brand-600 bg-brand-900/50 p-4">
+            <p className="text-xs uppercase tracking-wider text-slate-500">{kpi.label}</p>
+            <p className="text-2xl font-black text-white mt-1">{kpi.valor}</p>
+            {kpi.sub && <p className="text-xs text-slate-500 mt-1">{kpi.sub}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function SentimentoPainel({ dados }: { dados: Record<string, unknown> }) {
+  const total = Number(dados.total || 0)
+  const positivas = Number(dados.positivas || 0)
+  const negativas = Number(dados.negativas || 0)
+  const neutras = Number(dados.neutras || 0)
+  const plataformas = (dados.plataformas as Array<{ nome: string; total: number }>) || []
+  const score = Number(dados.score || 0)
+  const posPct = pct(positivas, total)
+  const negPct = pct(negativas, total)
+  const neuPct = pct(neutras, total)
+  const gaugeValue = scoreParaGauge(score)
+  const zona = zonaSentimento(gaugeValue)
+  const option = {
+    backgroundColor: "transparent",
+    series: [{
+      type: "gauge",
+      startAngle: 210,
+      endAngle: -30,
+      min: 0,
+      max: 100,
+      center: ["50%", "62%"],
+      radius: "92%",
+      axisLine: {
+        roundCap: true,
+        lineStyle: {
+          width: 20,
+          color: [
+            [0.2, "#dc2626"],
+            [0.4, "#ea580c"],
+            [0.6, "#ca8a04"],
+            [0.8, "#16a34a"],
+            [1.0, "#15803d"],
+          ],
+        },
+      },
+      splitLine: { show: true, length: 18, distance: -20, splitNumber: 5, lineStyle: { color: "#0a1628", width: 3 } },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      pointer: { length: "62%", width: 7, itemStyle: { color: "#f8fafc", shadowBlur: 8, shadowColor: "rgba(0,0,0,0.45)" } },
+      anchor: { show: true, size: 13, showAbove: true, itemStyle: { color: "#f8fafc", borderWidth: 2, borderColor: "#1e3a5f" } },
+      title: { show: false },
+      detail: { show: false },
+      data: [{ value: gaugeValue }],
+    }],
+  }
+
+  return (
+    <section className="rounded-2xl border border-brand-600 bg-brand-800 p-5 md:p-6 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Clima digital</p>
+          <h3 className="text-xl font-black text-white">{String(dados.titulo || "Clima político")}</h3>
+        </div>
+        <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-bold ${score >= 0 ? "text-emerald-500 bg-emerald-500/10" : "text-red-500 bg-red-500/10"}`}>
+          {score >= 0 ? <TrendingUp size={15} /> : <TrendingDown size={15} />}
+          {score > 0 ? "+" : ""}{score}% score
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5 items-center">
+        <div className="flex flex-col items-center">
+          <div className="w-full" style={{ height: 190 }}>
+            <ReactECharts option={option} style={{ height: 190 }} />
+          </div>
+          <div className="rounded-full border px-4 py-1.5 text-sm font-black -mt-5" style={{ color: zona.color, borderColor: `${zona.color}66`, backgroundColor: `${zona.color}18` }}>
+            {zona.label}
+          </div>
+          <p className="text-xs text-slate-500 mt-2">{zona.desc}</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <MiniStat label="Positivas" valor={fmt(positivas)} sub={`${posPct}% do total`} cls="text-emerald-500" />
+            <MiniStat label="Neutras" valor={fmt(neutras)} sub={`${neuPct}% do total`} cls="text-slate-500" />
+            <MiniStat label="Negativas" valor={fmt(negativas)} sub={`${negPct}% do total`} cls="text-red-500" />
+          </div>
+          <div className="rounded-xl border border-brand-600 bg-brand-900/50 p-4">
+            <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">Metodologia</p>
+            <p className="text-sm text-slate-300 mt-1">
+              Score = (positivas - negativas) / total x 100. O ponteiro converte esse score para a escala 0-100 do clima político.
+            </p>
+            <div className="h-3 rounded-full overflow-hidden bg-brand-800 border border-brand-600 mt-3">
+              <div className="h-full bg-emerald-500 inline-block" style={{ width: `${posPct}%` }} />
+              <div className="h-full bg-slate-400 inline-block" style={{ width: `${neuPct}%` }} />
+              <div className="h-full bg-red-500 inline-block" style={{ width: `${negPct}%` }} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {plataformas.length > 0 && (
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-2">
+          {plataformas.slice(0, 4).map((p) => (
+            <div key={p.nome} className="flex items-center justify-between rounded-lg bg-brand-900/50 border border-brand-600 px-3 py-2">
+              <span className="text-sm text-slate-300">{p.nome}</span>
+              <span className="text-sm font-bold text-white">{fmt(Number(p.total || 0))}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function MiniStat({ label, valor, sub, cls }: { label: string; valor: string; sub?: string; cls: string }) {
+  return (
+    <div className="rounded-xl border border-brand-600 bg-brand-900/50 p-3">
+      <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
+      <p className={`text-lg font-black mt-1 ${cls}`}>{valor}</p>
+      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+function TemasPrincipais({ dados }: { dados: Record<string, unknown> }) {
+  const principal = (dados.principal as Record<string, unknown>) || {}
+  const secundarios = (dados.secundarios as Array<Record<string, unknown>>) || []
+  const temas = [
+    ...(principal.titulo ? [{ ...principal, destaque: true }] : []),
+    ...secundarios,
+  ]
+  if (!temas.length) return null
+
+  return (
+    <section className="rounded-2xl border border-brand-600 bg-brand-800 p-5 md:p-6 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 mb-5">
+        <div className="w-8 h-8 rounded-lg bg-brand-400/10 border border-brand-400/30 flex items-center justify-center">
+          <BarChart3 size={15} className="text-brand-300" />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Principais temas</p>
+          <h3 className="text-xl font-black text-white">{String(dados.titulo || "Narrativas do período")}</h3>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4">
+        {temas.slice(0, 5).map((tema, i) => {
+          const destaque = Boolean(tema.destaque)
+          const total = Number(tema.total || tema.mencoes || 0)
+          const positivas = Number(tema.positivas || 0)
+          const negativas = Number(tema.negativas || 0)
+          const pctPositivo = Number(tema.pct_positivo || 0)
+          const pctNegativo = Number(tema.pct_negativo || 0)
+          const pctNeutro = Math.max(0, 100 - pctPositivo - pctNegativo)
+          const temDistribuicao = pctPositivo > 0 || pctNegativo > 0 || positivas > 0 || negativas > 0
+          return (
+            <article key={`${String(tema.titulo || tema.nome || "")}-${i}`} className={`rounded-xl border p-4 ${destaque ? "border-brand-400/50 bg-brand-400/10" : "border-brand-600 bg-brand-900/50"}`}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-start gap-3 min-w-0">
+                  <span className="text-xs font-mono text-slate-600 w-5 pt-1">#{i + 1}</span>
+                  <div className="min-w-0">
+                    <h4 className={`font-black text-white ${destaque ? "text-lg" : "text-base"}`}>{String(tema.titulo || tema.nome || "Tema")}</h4>
+                    {Boolean(tema.descricao) && <p className="text-sm text-slate-300 leading-relaxed mt-1">{String(tema.descricao)}</p>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {total > 0 && <span className="text-xs font-mono text-slate-400">{fmt(total)} menções</span>}
+                  {Boolean(tema.tendencia) && (
+                    <span className="rounded-full border border-brand-400/30 bg-brand-400/10 px-2 py-0.5 text-[10px] uppercase tracking-wider font-bold text-brand-300">
+                      {String(tema.tendencia)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {temDistribuicao && (
+                <>
+                  <div className="flex h-2.5 rounded-full overflow-hidden bg-brand-700 mt-3">
+                    <div style={{ width: `${pctPositivo || pct(positivas, total)}%` }} className="bg-green-500 transition-all" />
+                    <div style={{ width: `${pctNeutro}%` }} className="bg-blue-500/40 transition-all" />
+                    <div style={{ width: `${pctNegativo || pct(negativas, total)}%` }} className="bg-red-500 transition-all" />
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-slate-600 mt-2">
+                    <span className="text-green-500">{positivas} pos.</span>
+                    <span className="text-red-500">{negativas} neg.</span>
+                  </div>
+                </>
+              )}
+              <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
+                {Boolean(tema.alcance) && <span>Alcance <b className="text-slate-300">{String(tema.alcance)}</b></span>}
+                {Boolean(tema.interacoes) && <span>Interações <b className="text-slate-300">{String(tema.interacoes)}</b></span>}
+                {Boolean(tema.polaridade) && <span>Polaridade <b className="text-slate-300">{String(tema.polaridade)}</b></span>}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function PerformanceOficial({ dados }: { dados: Record<string, unknown> }) {
+  const contas = (dados.contas as Array<Record<string, unknown>>) || []
+  return (
+    <section className="rounded-2xl border border-brand-600 bg-brand-800 p-5 md:p-6 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 mb-5">
+        <div className="w-8 h-8 rounded-lg bg-brand-400/10 border border-brand-400/30 flex items-center justify-center">
+          <TrendingUp size={15} className="text-brand-300" />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Canais oficiais</p>
+          <h3 className="text-xl font-black text-white">{String(dados.titulo || "Performance dos Canais Oficiais")}</h3>
+        </div>
+      </div>
+      <div className="space-y-4">
+        {contas.map((conta) => {
+          const perfil = (conta.perfil || {}) as Record<string, number>
+          const postagens = (conta.postagens || {}) as Record<string, number>
+          const crescimento = (conta.crescimento || {}) as Record<string, { pct: number | null; delta: number }>
+          const metricas = [
+            { label: "Seguidores", valor: fmt(Number(perfil.seguidores || 0)), delta: crescimento.seguidores },
+            { label: conta.rede === "Instagram" ? "Alcance" : "Impressões", valor: fmt(Number((conta.rede === "Instagram" ? perfil.alcance : perfil.impressoes) || 0)), delta: crescimento.alcance_ou_impressoes },
+            { label: "Engajamento", valor: fmt(Number(postagens.engajamento_total || 0)), delta: crescimento.engajamento },
+            { label: "Posts", valor: fmt(Number(postagens.total_posts || 0)), delta: crescimento.posts },
+          ]
+          const chartData = [
+            { name: "Likes", value: Number(postagens.likes || 0) },
+            { name: "Comentários", value: Number(postagens.comentarios || 0) },
+            { name: "Compart.", value: Number(postagens.compartilhamentos || 0) },
+            {
+              name: "Outras",
+              value: Number(postagens.salvos || 0) + Number(postagens.love || 0) + Number(postagens.haha || 0) +
+                Number(postagens.wow || 0) + Number(postagens.sad || 0) + Number(postagens.angry || 0),
+            },
+          ]
+          const option = {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+            grid: { top: 12, left: 8, right: 8, bottom: 8, containLabel: true },
+            xAxis: { type: "value", axisLabel: { color: "#64748b", fontSize: 10 }, splitLine: { lineStyle: { color: "#1e3a5f40" } } },
+            yAxis: { type: "category", data: chartData.map((d) => d.name), axisLabel: { color: "#94a3b8", fontSize: 11 }, axisLine: { show: false }, axisTick: { show: false } },
+            series: [{ type: "bar", data: chartData.map((d) => d.value), barWidth: 14, itemStyle: { color: "#38bdf8", borderRadius: [0, 5, 5, 0] } }],
+          }
+          return (
+            <div key={`${conta.rede}-${conta.id}`} className="rounded-xl border border-brand-600 bg-brand-900/40 p-4">
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <RedeBadge rede={String(conta.rede || "")} />
+                    <div>
+                      <p className="text-lg font-black text-white">{String(conta.rede || "")}</p>
+                      <p className="text-sm text-slate-500">{String(conta.nome || "")}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {metricas.map((m) => (
+                      <div key={m.label} className="rounded-md border border-brand-600/70 bg-brand-800/70 p-3">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">{m.label}</p>
+                        <p className="text-2xl font-bold text-white tracking-tight">{m.valor}</p>
+                        {m.delta && <p className={`text-sm font-medium ${deltaClass(m.delta)}`}>{deltaText(m.delta)} vs período anterior</p>}
+                      </div>
+                    ))}
+                  </div>
+                  {String(conta.rede || "") === "Facebook" && (
+                    <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-500">
+                      <span>+{fmt(Number(perfil.follows || 0))} follows</span>
+                      <span>-{fmt(Number(perfil.unfollows || 0))} unfollows</span>
+                      <span>{fmt(Number(perfil.views || 0))} views</span>
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <ReactECharts option={option} style={{ height: 190 }} />
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function RedeBadge({ rede }: { rede: string }) {
+  if (rede === "Instagram") {
+    return <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#f58529] via-[#dd2a7b] to-[#515bd4] flex items-center justify-center text-white font-black">◎</div>
+  }
+  return <div className="w-10 h-10 rounded-xl bg-[#1877f2] flex items-center justify-center text-white font-black text-2xl">f</div>
+}
+
+function TopPosts({ dados }: { dados: Record<string, unknown> }) {
+  const posts = (dados.posts as Array<Record<string, unknown>>) || []
+  if (!posts.length) return null
+  return (
+    <section className="rounded-2xl border border-brand-600 bg-brand-800 p-5 md:p-6 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 mb-5">
+        <div className="w-8 h-8 rounded-lg bg-brand-400/10 border border-brand-400/30 flex items-center justify-center">
+          <MessageCircle size={15} className="text-brand-300" />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Top posts oficiais</p>
+          <h3 className="text-xl font-black text-white">{String(dados.titulo || "Top posts")}</h3>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {posts.slice(0, 6).map((post) => {
+          const rede = String(post.rede || "")
+          const link = String(post.link || "")
+          const embedUrl = postEmbedUrl(link, rede)
+          return (
+          <div key={`${rede}-${String(post.id || "")}`} className="overflow-hidden rounded-lg border border-brand-600 bg-brand-900/40">
+            <div className="flex h-32">
+              {post.thumbnail ? (
+                <img src={resolverImagem(String(post.thumbnail))} alt="" className="w-28 h-full object-cover bg-brand-700 shrink-0" crossOrigin="anonymous" />
+              ) : embedUrl ? (
+                <div className="w-28 h-full bg-brand-700 overflow-hidden relative shrink-0">
+                  <iframe
+                    src={embedUrl}
+                    title={String(post.texto || post.link || "")}
+                    className="absolute top-0 left-0 border-0 bg-white pointer-events-none"
+                    style={{ width: 326, height: 460, transform: "scale(0.36)", transformOrigin: "top left" }}
+                    loading="lazy"
+                    sandbox="allow-scripts allow-same-origin allow-popups"
+                  />
+                </div>
+              ) : (
+                <div className="w-28 h-full bg-brand-700 shrink-0 flex items-center justify-center text-slate-500">
+                  <MessageCircle size={22} />
+                </div>
+              )}
+              <div className="p-3 min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] rounded-full bg-brand-400/10 text-brand-300 border border-brand-400/30 px-2 py-0.5">{String(post.rede || "")}</span>
+                  <span className="text-xs text-slate-500 truncate">{String(post.tipo || "Post")}</span>
+                  {link && (
+                    <a href={link} target="_blank" rel="noopener noreferrer" className="ml-auto text-slate-500 hover:text-brand-300 shrink-0">
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                </div>
+                <p className="text-sm text-slate-300 line-clamp-2">{String(post.texto || "(sem texto)")}</p>
+                <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
+                  <span className="font-black text-white">{fmt(Number(post.engajamento || 0))} eng.</span>
+                  <span>{fmt(Number(post.likes || 0))} likes</span>
+                  <span>{fmt(Number(post.comentarios || 0))} com.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          )
+        })}
+      </div>
+    </section>
+  )
 }
 
 // ── Textarea com auto-resize ──

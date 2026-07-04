@@ -1,0 +1,43 @@
+{
+  "$id": "politicai.theme.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resultados"],
+  "properties": {
+    "resultados": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "tema_principal", "temas_secundarios", "orgao_relacionado", "subtema", "evidencias", "confianca", "observacoes"],
+        "properties": {
+          "id": {"type": "string"},
+          "tema_principal": {
+            "type": "string",
+            "enum": [
+              "Saúde", "Educação", "Segurança pública", "Mobilidade e trânsito", "Obras e infraestrutura",
+              "Zeladoria e limpeza urbana", "Saneamento e alagamentos", "Habitação", "Assistência social",
+              "Meio ambiente", "Turismo e COP30", "Cultura", "Finanças/tributos", "Servidores/concurso",
+              "Licitação/contratos", "Crise/controle externo", "Política institucional", "Outros"
+            ]
+          },
+          "temas_secundarios": {"type": "array", "items": {"type": "string"}},
+          "orgao_relacionado": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sigla", "nome", "confianca"],
+            "properties": {
+              "sigla": {"type": ["string", "null"]},
+              "nome": {"type": ["string", "null"]},
+              "confianca": {"type": "number", "minimum": 0, "maximum": 0.95}
+            }
+          },
+          "subtema": {"type": ["string", "null"]},
+          "evidencias": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+          "confianca": {"type": "number", "minimum": 0, "maximum": 0.95},
+          "observacoes": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

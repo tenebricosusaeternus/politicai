@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 from typing import Optional
 
-from app.api.v1.deps import get_current_user, get_db
+from app.api.v1.deps import get_current_user, get_db, require_admin
 from app.models.user import User
 from app.models.sentimento_override import SentimentoOverride
 from app.models.mencao import Mencao
 from app.services.vtracker.client import vtracker, MONITORAMENTOS, NOMES
 from app.services.llm_sentiment import classificar_sentimento, extrair_temas_llm
+from app.services.curation import is_municipal_political_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,18 @@ STOPWORDS_PT = {
     "oi","olá","boa","bom","ótima","ótimo","ok","ops",
     "aqui","isso","este","essa","esse","aquele","aquela",
     "igor","normando",
+    "belém","belem","pará","paraense","brasil","mundo","link","confira",
+    "detalhes","conteúdo","conteudo","noticias","notícias","news","relevante",
+    "gosta","jeito","região","regiao","local","parte","anos","feira",
+    "cidade","todos","toda","principais","estado",
+    "população","populacao","prefeitura","secretaria","municipal","governo",
+    "meio","importante","além","alem","projeto","evento","está","esta",
+    "pública","publica","público","publico","resultado","vida","bairro",
+    "presidente","após","apos","durante","dias","nova","novo",
+    "amazônia","amazonia","cultura","gastronomia","gastronômico",
+    "gastronomico","experiência","experiencia","sabores","trajetória",
+    "trajetoria","diário","diario","todo","cada","fortalece",
+    "representante","consolidando","longo","espaço","espaco",
 }
 
 
@@ -62,6 +75,16 @@ def _tokenizar(texto: str) -> list:
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 SENTIMENTOS_VALIDOS = {"POSITIVA", "NEGATIVA", "NEUTRA", "SEM_QUALIFICACAO", "IRRELEVANTE"}
+_TEMAS_CACHE: dict[tuple, dict] = {}
+TEMA_FILTROS = {
+    "saude": {"saude", "saúde", "upa", "hospital", "posto", "medico", "médico", "remedio", "remédio", "sesma"},
+    "seguranca": {"segurança", "seguranca", "crime", "assalto", "violencia", "violência", "guarda", "polícia", "policia"},
+    "obras": {"obra", "obras", "asfalto", "rua", "avenida", "ponte", "reforma", "construção", "construcao"},
+    "transporte": {"onibus", "ônibus", "transporte", "transito", "trânsito", "brt", "tarifa", "mobilidade", "semob"},
+    "limpeza": {"lixo", "limpeza", "entulho", "saneamento", "alagamento", "canal", "drenagem", "zeladoria"},
+    "educacao": {"educacao", "educação", "escola", "creche", "professor", "aluno", "merenda"},
+    "gestao": {"gestao", "gestão", "prefeitura", "prefeito", "secretaria", "governo", "serviço", "servico"},
+}
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -90,9 +113,17 @@ def _sentimento_final(m: Mencao, overrides: dict) -> str:
     return "PENDENTE"
 
 
+def _publicador_valido(nome: Optional[str]) -> str:
+    nome_limpo = (nome or "").strip()
+    if not nome_limpo or nome_limpo.lower() == "publicador anônimo":
+        return ""
+    return nome_limpo
+
+
 def _mencao_para_dict(m: Mencao, overrides: dict) -> dict:
     ov = overrides.get(m.id)
     sentimento = _sentimento_final(m, overrides)
+    publicador_nome = _publicador_valido(m.publicador_nome)
     return {
         "id": m.id,
         "monitoramento_id": m.monitoramento_id,
@@ -100,8 +131,8 @@ def _mencao_para_dict(m: Mencao, overrides: dict) -> dict:
         "link": m.link or "",
         "data": m.data.isoformat() if m.data else None,
         "plataforma": m.plataforma or "",
-        "publicador_nome": m.publicador_nome or "",
-        "publicador_link": m.publicador_link or "",
+        "publicador_nome": publicador_nome,
+        "publicador_link": m.publicador_link if publicador_nome else "",
         "sentimento": sentimento,
         "sentimento_vtracker": m.sentimento_vtracker or "",
         "sentimento_llm": m.sentimento_llm or "",
@@ -150,6 +181,17 @@ def _dedup_por_link(mencoes: list) -> list:
             seen.add(key)
             result.append(m)
     return result
+
+
+def _mencao_tem_tema(m: Mencao, tema: Optional[str]) -> bool:
+    if not tema:
+        return True
+    vocab = TEMA_FILTROS.get(tema)
+    if not vocab:
+        return True
+    texto = f"{m.titulo or ''} {m.texto or ''} {m.tipo_conteudo or ''}".lower()
+    texto = re.sub(r'[^\w\sáàãâéèêíìîóòõôúùûç-]', ' ', texto)
+    return any(term in texto for term in vocab)
 
 
 def _parse_num(valor) -> int:
@@ -382,8 +424,9 @@ def _resumo_db(db: Session, monitoramento: str, d_inicio: date, d_fim: date) -> 
         else:
             sem_q += 1
         engajamento += (m.likes or 0) + (m.shares or 0) + (m.comentarios or 0)
-        if m.publicador_nome:
-            publicadores.add(m.publicador_nome)
+        publicador = _publicador_valido(m.publicador_nome)
+        if publicador:
+            publicadores.add(publicador)
 
     total = positivas + negativas + neutras + sem_q
     mid = MONITORAMENTOS.get(monitoramento, 0)
@@ -615,7 +658,7 @@ def trigger_classificar(
 
 @router.get("/vtracker/token/status")
 def vtracker_token_status(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Estado do token V-Tracker: válido, expirado e quando expira."""
     import json as _json, base64 as _b64
@@ -635,18 +678,14 @@ def vtracker_token_status(
 @router.post("/vtracker/token")
 def atualizar_vtracker_token(
     token: str = Body(..., embed=True),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """
     Atualiza o JWT do V-Tracker em tempo real (sem reiniciar o servidor) e
-    persiste em VTRACKER_TOKEN no .env. Renove em app.vtracker.com.br
+    mantém em memória até o servidor reiniciar. Renove em app.vtracker.com.br
     (F12 > Network > copie o header Authorization, sem o 'Bearer ').
     """
-    from app.models.user import UserRole
-    if current_user.role != UserRole.admin:
-        raise HTTPException(403, "Apenas administradores podem atualizar o token")
-
-    import json as _json, base64 as _b64, os, re as _re
+    import json as _json, base64 as _b64
     token = token.strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
@@ -664,32 +703,9 @@ def atualizar_vtracker_token(
     # Aplica em memória
     vtracker.set_token(token)
 
-    # Persiste no .env (substitui ou adiciona a linha VTRACKER_TOKEN)
-    env_path = os.path.join(os.getcwd(), ".env")
-    try:
-        linhas = []
-        achou = False
-        if os.path.exists(env_path):
-            with open(env_path, "r") as f:
-                for ln in f:
-                    if _re.match(r"\s*VTRACKER_TOKEN\s*=", ln):
-                        linhas.append(f"VTRACKER_TOKEN={token}\n"); achou = True
-                    else:
-                        linhas.append(ln)
-        if not achou:
-            if linhas and not linhas[-1].endswith("\n"):
-                linhas[-1] += "\n"
-            linhas.append(f"VTRACKER_TOKEN={token}\n")
-        with open(env_path, "w") as f:
-            f.writelines(linhas)
-        persistido = True
-    except Exception as e:
-        logging.warning("Não persistiu token no .env: %s", e)
-        persistido = False
-
     return {
         "ok": True,
-        "persistido_env": persistido,
+        "persistido_env": False,
         "expira_em": datetime.fromtimestamp(exp).isoformat() if exp else None,
         "email": payload.get("email"),
         "empresa": payload.get("empresa"),
@@ -704,6 +720,8 @@ def get_mencoes_recentes(
     pagina: int = Query(0, ge=0),
     tamanho: int = Query(20, ge=1, le=100),
     incluir_irrelevantes: bool = Query(False),
+    sentimento: Optional[str] = Query(None),
+    tema: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -714,6 +732,10 @@ def get_mencoes_recentes(
     # Valida monitoramento
     if monitoramento != "todos" and monitoramento not in MONITORAMENTOS:
         raise HTTPException(400, f"Monitoramento inválido. Use: {list(MONITORAMENTOS.keys())} ou 'todos'")
+    if sentimento and sentimento not in {*SENTIMENTOS_VALIDOS, "PENDENTE"}:
+        raise HTTPException(400, f"Sentimento inválido. Use: {SENTIMENTOS_VALIDOS} ou PENDENTE")
+    if tema and tema not in TEMA_FILTROS:
+        raise HTTPException(400, f"Tema inválido. Use: {list(TEMA_FILTROS.keys())}")
 
     q = _base_query(db, monitoramento, d_inicio, d_fim)
 
@@ -723,6 +745,10 @@ def get_mencoes_recentes(
 
     ids = [m.id for m in unicas]
     overrides = _load_overrides(db, ids)
+    if tema:
+        unicas = [m for m in unicas if _mencao_tem_tema(m, tema)]
+    if sentimento:
+        unicas = [m for m in unicas if _sentimento_final(m, overrides) == sentimento]
     if not incluir_irrelevantes:
         unicas = [m for m in unicas if _sentimento_final(m, overrides) != "IRRELEVANTE"]
 
@@ -754,7 +780,7 @@ def corrigir_sentimento(
     plataforma: str = Body("", embed=True),
     publicador_nome: str = Body("", embed=True),
     sentimento_vtracker: str = Body("NEUTRA", embed=True),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     if sentimento not in SENTIMENTOS_VALIDOS:
@@ -792,7 +818,7 @@ def corrigir_sentimento(
 @router.delete("/mencoes/{ocorrencia_id}/sentimento")
 def remover_correcao(
     ocorrencia_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     override = db.query(SentimentoOverride).filter(
@@ -808,7 +834,7 @@ def remover_correcao(
 @router.get("/correcoes")
 def listar_correcoes(
     monitoramento_id: Optional[int] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     q = db.query(SentimentoOverride)
@@ -846,21 +872,36 @@ def get_temas(
     d_inicio = data_inicio or hoje
     d_fim = data_fim or hoje
 
-    q = _base_query(db, monitoramento, d_inicio, d_fim, somente_processadas=False)
-    mencoes = q.order_by(Mencao.data.desc()).limit(200).all()
+    q = _base_query(db, monitoramento, d_inicio, d_fim, somente_processadas=True)
+    mencoes = _dedup_por_link(q.order_by(Mencao.data.desc()).all())
     ids = [m.id for m in mencoes]
     overrides = _load_overrides(db, ids)
 
     # Filtra irrelevantes; passa texto + sentimento para o LLM
-    para_llm = []
+    candidatas = []
     for m in mencoes:
         s = _sentimento_final(m, overrides)
         if s == "IRRELEVANTE":
             continue
-        para_llm.append({"texto": m.texto or "", "sentimento": s})
+        if not is_municipal_political_candidate(m):
+            continue
+        eng = (m.likes or 0) + (m.shares or 0) + (m.comentarios or 0)
+        prioridade = 2 if s == "NEGATIVA" else 1 if s == "NEUTRA" else 0
+        candidatas.append((prioridade, eng, m.data or datetime.min, {"texto": m.texto or "", "sentimento": s}))
+    candidatas.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    para_llm = [item[3] for item in candidatas[:300]]
+
+    cache_key = (monitoramento, d_inicio.isoformat(), d_fim.isoformat(), len(para_llm))
+    cached = _TEMAS_CACHE.get(cache_key)
+    if cached:
+        return cached
 
     temas = extrair_temas_llm(para_llm)
-    return {"mencoes_analisadas": len(para_llm), "temas": temas}
+    result = {"mencoes_analisadas": len(para_llm), "temas": temas}
+    if len(_TEMAS_CACHE) > 64:
+        _TEMAS_CACHE.clear()
+    _TEMAS_CACHE[cache_key] = result
+    return result
 
 
 # ─── nuvem de palavras ───────────────────────────────────────────────────────
@@ -889,6 +930,8 @@ def get_nuvem_palavras(
     for m in mencoes:
         s = _sentimento_final(m, overrides)
         if s == "IRRELEVANTE":
+            continue
+        if not is_municipal_political_candidate(m):
             continue
         total_mencoes += 1
         s = s if s in ("POSITIVA", "NEGATIVA", "NEUTRA", "SEM_QUALIFICACAO") else "NEUTRA"
@@ -943,7 +986,11 @@ def get_publicadores(
         s = _sentimento_final(m, overrides)
         if s == "IRRELEVANTE":
             continue
-        nome = (m.publicador_nome or "").strip() or "(sem nome)"
+        if not is_municipal_political_candidate(m):
+            continue
+        nome = _publicador_valido(m.publicador_nome)
+        if not nome:
+            continue
         s_key = s if s in SENTIMENTOS_VALIDOS else "NEUTRA"
         eng = (m.likes or 0) + (m.shares or 0) + (m.comentarios or 0)
         agg[nome]["total"] += 1
@@ -1003,6 +1050,8 @@ def get_plataformas(
         s = _sentimento_final(m, overrides)
         if s == "IRRELEVANTE":
             continue
+        if not is_municipal_political_candidate(m):
+            continue
         nome = (m.plataforma or "").strip() or "Outros"
         s_key = s if s in SENTIMENTOS_VALIDOS else "NEUTRA"
         eng = (m.likes or 0) + (m.shares or 0) + (m.comentarios or 0)
@@ -1060,6 +1109,8 @@ def get_heatmap(
         s = _sentimento_final(m, overrides)
         if s == "IRRELEVANTE":
             continue
+        if not is_municipal_political_candidate(m):
+            continue
         total_mencoes += 1
         wd = m.data.weekday()
         hr = m.data.hour
@@ -1092,14 +1143,10 @@ def reclassificar_mencoes(
     monitoramento: str = Query("todos"),
     data_inicio: Optional[date] = None,
     data_fim: Optional[date] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Reclassifica menções do banco via Qwen. Não sobrescreve correções manuais."""
-    from app.models.user import UserRole
-    if current_user.role != UserRole.admin:
-        raise HTTPException(403, "Apenas administradores podem reclassificar")
-
     hoje = date.today()
     d_inicio = data_inicio or hoje
     d_fim = data_fim or hoje
@@ -1110,22 +1157,24 @@ def reclassificar_mencoes(
     ids = [m.id for m in mencoes]
     overrides = _load_overrides(db, ids)
 
-    atualizadas = 0
+    resetadas = 0
     for m in mencoes:
         ov = overrides.get(m.id)
         if ov and ov.source == "manual":
             continue  # não sobrescreve correção humana
-        novo_sent = classificar_sentimento(m.texto or m.titulo or "")
-        m.sentimento_llm = novo_sent
-        m.llm_processado = True
-        atualizadas += 1
+        m.sentimento_llm = None
+        m.llm_processado = False
+        resetadas += 1
 
     db.commit()
+    from app.services.sync import classificar_todos_pendentes
+    classificadas = classificar_todos_pendentes(db, max_total=min(resetadas, 500))
     return {
         "ok": True,
         "processadas": len(mencoes),
-        "atualizadas": atualizadas,
-        "mensagem": f"{atualizadas} menções reclassificadas pelo Qwen",
+        "resetadas": resetadas,
+        "atualizadas": classificadas,
+        "mensagem": f"{resetadas} resetadas · {classificadas} reclassificadas pelo Qwen",
     }
 
 
@@ -1133,14 +1182,10 @@ def reclassificar_mencoes(
 def limpar_reclassificar(
     data_inicio: Optional[date] = None,
     data_fim: Optional[date] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Apaga classificações LLM e refaz do zero. Mantém correções manuais."""
-    from app.models.user import UserRole
-    if current_user.role != UserRole.admin:
-        raise HTTPException(403, "Apenas administradores podem executar esta operação")
-
     hoje = date.today()
     d_inicio = data_inicio or (hoje - timedelta(days=30))
     d_fim = data_fim or hoje
@@ -1163,8 +1208,8 @@ def limpar_reclassificar(
     db.commit()
 
     # Dispara classificação imediata (primeiras 100)
-    from app.services.sync import classificar_pendentes
-    classificadas = classificar_pendentes(db, limite=100)
+    from app.services.sync import classificar_todos_pendentes
+    classificadas = classificar_todos_pendentes(db, max_total=100)
 
     return {
         "ok": True,
@@ -1177,7 +1222,7 @@ def limpar_reclassificar(
 @router.post("/classificar-texto")
 def classificar_texto_avulso(
     texto: str = Body(..., embed=True),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     resultado = classificar_sentimento(texto)
     return {"sentimento": resultado, "texto": texto[:100]}
@@ -1188,10 +1233,7 @@ def classificar_texto_avulso(
 @router.post("/token")
 def atualizar_token(
     token: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
-    from app.models.user import UserRole
-    if current_user.role != UserRole.admin:
-        raise HTTPException(403, "Apenas administradores podem atualizar o token")
     vtracker.set_token(token)
     return {"ok": True, "mensagem": "Token atualizado com sucesso"}

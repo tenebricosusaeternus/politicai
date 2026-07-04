@@ -69,6 +69,7 @@ export interface ResumoItem {
 
 export type BlocoTipo =
   | "titulo" | "texto" | "imagem" | "grafico" | "callout" | "metricas" | "divisoria"
+  | "hero_resumo" | "sentimento_painel" | "performance_oficial" | "top_posts" | "temas_principais"
 
 export interface MetricaItem { label: string; valor: string; sub?: string }
 export interface GraficoSerie { nome: string; dados: number[] }
@@ -97,6 +98,17 @@ export interface RelatorioDetail extends RelatorioListItem {
   updated_at: string | null
 }
 
+export interface ReportJob {
+  id: string
+  status: "queued" | "running" | "completed" | "failed"
+  progress: number
+  message: string
+  relatorio_id: number | null
+  error: string | null
+  periodo_inicio: string
+  periodo_fim: string
+}
+
 /** Origem do backend (para resolver URLs de /uploads). */
 export const BACKEND_ORIGIN = (api.defaults.baseURL || "http://localhost:8000/api/v1")
   .replace(/\/api\/v1\/?$/, "")
@@ -119,6 +131,13 @@ export const reportsApi = {
   gerar: (periodo_inicio: string, periodo_fim?: string) =>
     api.post<RelatorioDetail>("/reports/gerar", { periodo_inicio, periodo_fim })
       .then((r) => r.data),
+
+  gerarBackground: (periodo_inicio: string, periodo_fim?: string) =>
+    api.post<ReportJob>("/reports/gerar-background", { periodo_inicio, periodo_fim })
+      .then((r) => r.data),
+
+  job: (jobId: string) =>
+    api.get<ReportJob>(`/reports/jobs/${jobId}`).then((r) => r.data),
 
   atualizar: (id: number, payload: Record<string, unknown>) =>
     api.patch<RelatorioDetail>(`/reports/${id}`, payload).then((r) => r.data),

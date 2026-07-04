@@ -1,0 +1,21 @@
+{
+  "$id": "politicai.daily_report.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metadata", "qualidade_dados", "visao_geral", "sentimento", "temas_principais", "riscos", "oportunidades", "narrativas", "atores", "recomendacoes", "top_mencoes", "proximos_passos", "limitacoes"],
+  "properties": {
+    "metadata": {"type": "object"},
+    "qualidade_dados": {"type": "object"},
+    "visao_geral": {"type": "object"},
+    "sentimento": {"type": "object"},
+    "temas_principais": {"type": "array"},
+    "riscos": {"type": "array"},
+    "oportunidades": {"type": "array"},
+    "narrativas": {"type": "array"},
+    "atores": {"type": "array"},
+    "recomendacoes": {"type": "array"},
+    "top_mencoes": {"type": "array"},
+    "proximos_passos": {"type": "array"},
+    "limitacoes": {"type": "array"}
+  }
+}

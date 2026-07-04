@@ -16,6 +16,7 @@ class PoliticalEventOut(BaseModel):
     tags: Optional[Any]
     location: Optional[str]
     event_date: date
+    raw_data: Optional[Any] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

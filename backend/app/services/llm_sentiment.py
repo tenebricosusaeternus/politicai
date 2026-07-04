@@ -4,9 +4,9 @@ Quatro classes: POSITIVA, NEGATIVA, NEUTRA, IRRELEVANTE.
 Primeiro decide relevância política/municipal. Só depois classifica sentimento.
 """
 import logging
-import httpx
 from typing import Optional
-from app.core.config import settings
+from app.services.ai.llm_router import LLMTask, chat_completion
+from app.services.ai.prompt_registry import get_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,14 @@ IMPORTANTE:
 Responda APENAS com uma palavra: POSITIVA, NEGATIVA, NEUTRA ou IRRELEVANTE."""
 
 SENTIMENTOS_VALIDOS = {"POSITIVA", "NEGATIVA", "NEUTRA", "IRRELEVANTE"}
+CLASSIFICATION_PROMPT_VERSION = "fast_relevance_sentiment_classifier_v1.0.0"
+
+
+def _system_prompt() -> str:
+    try:
+        return get_prompt(CLASSIFICATION_PROMPT_VERSION)
+    except Exception:
+        return SYSTEM_PROMPT
 
 
 def classificar_sentimento(texto: str) -> Optional[str]:
@@ -45,23 +53,19 @@ def classificar_sentimento(texto: str) -> Optional[str]:
         return "IRRELEVANTE"
 
     try:
-        with httpx.Client(timeout=30) as client:
-            resp = client.post(
-                f"{settings.LLM_BASE_URL}/chat/completions",
-                json={
-                    "model": settings.LLM_MODEL,
-                    "max_tokens": 5,
-                    "temperature": 0,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": texto[:800]},
-                    ],
-                },
-            )
-            resp.raise_for_status()
-            resposta = resp.json()["choices"][0]["message"]["content"].strip().upper()
-            palavra = resposta.split()[0].rstrip(".,!?") if resposta else "IRRELEVANTE"
-            return palavra if palavra in SENTIMENTOS_VALIDOS else None
+        resposta = chat_completion(
+            task=LLMTask.FAST_CLASSIFICATION,
+            max_tokens=20,
+            temperature=0,
+            thinking=False,
+            timeout=30,
+            messages=[
+                {"role": "system", "content": _system_prompt()},
+                {"role": "user", "content": texto[:800]},
+            ],
+        ).upper()
+        palavra = resposta.split()[0].rstrip(".,!?") if resposta else "IRRELEVANTE"
+        return palavra if palavra in SENTIMENTOS_VALIDOS else None
     except Exception as e:
         logger.warning(f"Erro na classificação LLM: {e}")
         return None
@@ -97,21 +101,17 @@ def classificar_lote_llm(textos: list) -> list:
     user = _BATCH_INSTRUCAO + "\n".join(linhas)
 
     try:
-        with httpx.Client(timeout=180) as client:
-            resp = client.post(
-                f"{settings.LLM_BASE_URL}/chat/completions",
-                json={
-                    "model": settings.LLM_MODEL,
-                    "max_tokens": len(textos) * 8 + 50,
-                    "temperature": 0,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user},
-                    ],
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
+        content = chat_completion(
+            task=LLMTask.FAST_CLASSIFICATION,
+            max_tokens=len(textos) * 8 + 50,
+            temperature=0,
+            thinking=False,
+            timeout=180,
+            messages=[
+                {"role": "system", "content": _system_prompt()},
+                {"role": "user", "content": user},
+            ],
+        )
     except Exception as e:
         logger.warning(f"Erro na classificação em lote: {e}")
         return [None] * len(textos)
@@ -177,18 +177,14 @@ def extrair_temas_llm(ocorrencias: list) -> list:
     prompt = TEMAS_PROMPT.format(publicacoes=publicacoes)
 
     try:
-        with httpx.Client(timeout=90) as client:
-            resp = client.post(
-                f"{settings.LLM_BASE_URL}/chat/completions",
-                json={
-                    "model": settings.LLM_MODEL,
-                    "max_tokens": 800,
-                    "temperature": 0,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"].strip()
+        content = chat_completion(
+            task=LLMTask.THEME_EXTRACTION,
+            max_tokens=800,
+            temperature=0,
+            thinking=False,
+            timeout=90,
+            messages=[{"role": "user", "content": prompt}],
+        )
     except Exception as e:
         logger.warning(f"Erro ao chamar LLM para temas: {e}")
         return []

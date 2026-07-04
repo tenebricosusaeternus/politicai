@@ -1,0 +1,17 @@
+{
+  "$id": "politicai.official_public_comparison.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["periodo", "resumo", "status_geral_absorcao", "pautas_oficiais", "desalinhamentos", "pautas_publicas_nao_cobertas", "ajustes_editoriais_sugeridos", "alertas_de_causalidade", "limitacoes"],
+  "properties": {
+    "periodo": {"type": "object"},
+    "resumo": {"type": "string"},
+    "status_geral_absorcao": {"type": "string", "enum": ["ABSORVIDA", "IGNORADA", "CONTESTADA", "PARCIAL", "INDETERMINADA"]},
+    "pautas_oficiais": {"type": "array"},
+    "desalinhamentos": {"type": "array"},
+    "pautas_publicas_nao_cobertas": {"type": "array"},
+    "ajustes_editoriais_sugeridos": {"type": "array"},
+    "alertas_de_causalidade": {"type": "array"},
+    "limitacoes": {"type": "array"}
+  }
+}

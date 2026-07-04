@@ -1,0 +1,27 @@
+{
+  "$id": "politicai.classification.batch.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resultados"],
+  "properties": {
+    "resultados": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "classe", "relevante", "confianca", "justificativa_curta", "flags", "auditoria_recomendada"],
+        "properties": {
+          "id": {"type": "string"},
+          "classe": {"type": "string", "enum": ["POSITIVA", "NEGATIVA", "NEUTRA", "IRRELEVANTE"]},
+          "relevante": {"type": "boolean"},
+          "confianca": {"type": "number", "minimum": 0, "maximum": 0.95},
+          "justificativa_curta": {"type": "string", "maxLength": 180},
+          "flags": {"type": "array", "items": {"type": "string"}},
+          "auditoria_recomendada": {"type": "boolean"}
+        }
+      }
+    },
+    "erros_parseamento": {"type": "array", "items": {"type": "object"}}
+  }
+}

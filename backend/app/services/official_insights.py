@@ -465,11 +465,6 @@ def sync_official_insights_periodo(db: Session, d_inicio: date, d_fim: date) -> 
                 },
             ))
             snapshots += 1
-            db.query(OfficialPost).filter(
-                OfficialPost.conta_id == norm["id"],
-                OfficialPost.data >= datetime.combine(d_inicio, datetime.min.time()),
-                OfficialPost.data < datetime.combine(d_fim + timedelta(days=1), datetime.min.time()),
-            ).delete(synchronize_session=False)
             for post in norm["top_posts"]:
                 thumbnail = cache_thumbnail(post["thumbnail"], post["id"])
                 db.execute(pg_insert(OfficialPost).values({
