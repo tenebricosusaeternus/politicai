@@ -18,6 +18,8 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+
+from app.core.database import engine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.mencao import Mencao
@@ -207,8 +209,13 @@ def sincronizar_periodo(
     Puxa todos os monitores para o período e upserta no banco.
     Retorna {"novos": N, "janelas": M, "erros": K}.
     """
-    lock_adquirido = bool(db.execute(text("select pg_try_advisory_lock(:lock_id)"), {"lock_id": SYNC_LOCK_ID}).scalar())
+    # Lock numa conexão DEDICADA: advisory lock de sessão vive na conexão; na
+    # Session ele cai numa conexão do pool e pode ficar preso numa conexão
+    # ociosa (incidente da Embratur em 2026-07-04, produção 8 dias sem sync).
+    lock_conn = engine.connect()
+    lock_adquirido = bool(lock_conn.execute(text("select pg_try_advisory_lock(:lock_id)"), {"lock_id": SYNC_LOCK_ID}).scalar())
     if not lock_adquirido:
+        lock_conn.close()
         registrar_sync(db, "em_andamento", "sync já está em execução")
         return {
             "novos": 0,
@@ -294,8 +301,10 @@ def sincronizar_periodo(
         registrar_sync(db, "erro", str(e))
         raise
     finally:
-        db.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": SYNC_LOCK_ID})
-        db.commit()
+        try:
+            lock_conn.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": SYNC_LOCK_ID})
+        finally:
+            lock_conn.close()
 
 
 def sincronizar_recente(db: Session, dias: int = 7, resetar: bool = RESET_MENTIONS_ON_SYNC) -> dict:
@@ -305,16 +314,26 @@ def sincronizar_recente(db: Session, dias: int = 7, resetar: bool = RESET_MENTIO
     return sincronizar_periodo(db, d_inicio, hoje, resetar=resetar, classificar=False)
 
 
-def _try_classify_lock(db: Session) -> bool:
-    return bool(db.execute(
+def _try_classify_lock():
+    """Adquire o lock de classificação numa conexão DEDICADA.
+    Retorna a conexão dona do lock, ou None se outro worker o detém."""
+    conn = engine.connect()
+    ok = bool(conn.execute(
         text("select pg_try_advisory_lock(:lock_id)"),
         {"lock_id": CLASSIFY_LOCK_ID},
     ).scalar())
+    if not ok:
+        conn.close()
+        return None
+    return conn
 
 
-def _release_classify_lock(db: Session) -> None:
-    db.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": CLASSIFY_LOCK_ID})
-    db.commit()
+def _release_classify_lock(conn) -> None:
+    try:
+        conn.execute(text("select pg_advisory_unlock(:lock_id)"), {"lock_id": CLASSIFY_LOCK_ID})
+    finally:
+        conn.close()
+
 
 
 # ─── classificação LLM ───────────────────────────────────────────────────────
@@ -324,7 +343,8 @@ def classificar_pendentes(db: Session, limite: int = LLM_BATCH_SIZE) -> int:
     Classifica as menções que ainda não foram processadas pela LLM.
     Retorna o número de menções classificadas nesta rodada.
     """
-    if not _try_classify_lock(db):
+    lock_conn = _try_classify_lock()
+    if lock_conn is None:
         logger.info("Classificação já está em execução")
         return 0
 
@@ -353,7 +373,7 @@ def classificar_pendentes(db: Session, limite: int = LLM_BATCH_SIZE) -> int:
         logger.info("LLM: %d menções classificadas", classificadas)
         return classificadas
     finally:
-        _release_classify_lock(db)
+        _release_classify_lock(lock_conn)
 
 
 def _chunks(seq: list, size: int) -> list[list]:
@@ -381,7 +401,8 @@ def classificar_todos_pendentes(
     Cada worker faz uma chamada HTTP independente ao Qwen local.
     Retorna o total classificado.
     """
-    if not _try_classify_lock(db):
+    lock_conn = _try_classify_lock()
+    if lock_conn is None:
         logger.info("Classificação já está em execução")
         return 0
 
@@ -436,7 +457,7 @@ def classificar_todos_pendentes(
             )
         return processados
     finally:
-        _release_classify_lock(db)
+        _release_classify_lock(lock_conn)
 
 
 def total_pendentes(db: Session) -> int:
