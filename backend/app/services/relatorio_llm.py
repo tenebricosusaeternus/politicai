@@ -269,10 +269,13 @@ def gerar_relatorio_dados(db: Session, d_inicio: date, d_fim: date) -> dict:
         mencoes_texto=mencoes_texto,
     )
 
-    # Chama o LLM
+    # Chama o LLM. IMPORTANTE: JSON estruturado GRANDE roda no modelo instruct
+    # ("default", Qwen2.5 não-reasoning): o modelo REPORT (Qwen3.x) ignora o
+    # /no_think, esgota o orçamento "pensando" e devolve reasoning sem content
+    # (falha documentada; mesma correção da Embratur).
     try:
         content = chat_completion(
-            task=LLMTask.REPORT,
+            task="default",
             max_tokens=8000,
             temperature=0.1,
             thinking=False,
